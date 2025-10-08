@@ -1,4 +1,4 @@
-name: '[START] Deploy Infra AWS'
+name: '[START] Validate and Create PR to Main'
 
 on:
   push:
