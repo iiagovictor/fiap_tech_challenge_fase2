@@ -31,10 +31,10 @@ jobs:
           echo "tf_auto_approve=$(yq '.tarraform.auto_approve' config.yaml)" >> $GITHUB_OUTPUT
           echo "tf_destroy=$(yq '.tarraform.destroy' config.yaml)" >> $GITHUB_OUTPUT
 
-  aws_credentials:
+  terraform_apply:
     needs: setup
+    if: ${{ needs.setup.outputs.tf_destroy != 'true' }}
     runs-on: ubuntu-latest
-    environment: prod
     steps:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -43,11 +43,6 @@ jobs:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 
-  terraform_apply:
-    needs: [setup, aws_credentials]
-    if: ${{ needs.setup.outputs.tf_destroy != 'true' }}
-    runs-on: ubuntu-latest
-    steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -75,10 +70,17 @@ jobs:
           terraform apply $([ "${{ needs.setup.outputs.tf_auto_approve }}" = "true" ] && echo "-auto-approve") -input=false -var="aws_region=${{ needs.setup.outputs.aws_region }}"
 
   terraform_destroy:
-    needs: [setup, aws_credentials]
+    needs: setup
     if: ${{ needs.setup.outputs.tf_destroy == 'true' }}
     runs-on: ubuntu-latest
     steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ needs.setup.outputs.aws_region }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
