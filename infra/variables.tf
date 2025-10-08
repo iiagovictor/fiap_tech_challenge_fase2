@@ -27,7 +27,7 @@ variable "raw_table_name" {
 variable "glue_max_capacity" {
   description = "Maximum capacity for Glue jobs"
   type        = number
-  default     = 2
+  default     = 1
 }
 
 variable "glue_timeout" {
