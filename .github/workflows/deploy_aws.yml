@@ -29,7 +29,7 @@ jobs:
           echo "python_version=$(yq '.setup.python_version // "3.11"' config.yaml)" >> $GITHUB_OUTPUT
           # Região principal
           echo "aws_region=$(yq '.aws.region' config.yaml)" >> $GITHUB_OUTPUT
-          # Backend (correção: terraform em vez de tarraform)
+          # Backend
           echo "aws_account_id=$(yq '.terraform.backend.account_id' config.yaml)" >> $GITHUB_OUTPUT
           echo "s3_bucket=$(yq '.terraform.backend.s3_bucket' config.yaml)" >> $GITHUB_OUTPUT
           echo "s3_key=$(yq '.terraform.backend.key' config.yaml)" >> $GITHUB_OUTPUT
@@ -40,19 +40,76 @@ jobs:
 
       - name: Validate required variables
         run: |
+          EXIT_CODE=0
+          
+          # Validação das variáveis de setup
+          if [ -z "${{ steps.vars.outputs.python_version }}" ]; then
+            echo "❌ Error: python_version is required"
+            EXIT_CODE=1
+          else
+            echo "✅ python_version: ${{ steps.vars.outputs.python_version }}"
+          fi
+          
+          # Validação das variáveis AWS
           if [ -z "${{ steps.vars.outputs.aws_region }}" ]; then
             echo "❌ Error: aws_region is required"
-            exit 1
+            EXIT_CODE=1
+          else
+            echo "✅ aws_region: ${{ steps.vars.outputs.aws_region }}"
           fi
+          
+          # Validação do backend Terraform
+          if [ -z "${{ steps.vars.outputs.aws_account_id }}" ]; then
+            echo "❌ Error: terraform.backend.account_id is required"
+            EXIT_CODE=1
+          else
+            echo "✅ aws_account_id: ${{ steps.vars.outputs.aws_account_id }}"
+          fi
+          
           if [ -z "${{ steps.vars.outputs.s3_bucket }}" ]; then
-            echo "❌ Error: s3_bucket is required"
-            exit 1
+            echo "❌ Error: terraform.backend.s3_bucket is required"
+            EXIT_CODE=1
+          else
+            echo "✅ s3_bucket: ${{ steps.vars.outputs.s3_bucket }}"
           fi
+          
           if [ -z "${{ steps.vars.outputs.s3_key }}" ]; then
-            echo "❌ Error: s3_key is required"
+            echo "❌ Error: terraform.backend.key is required"
+            EXIT_CODE=1
+          else
+            echo "✅ s3_key: ${{ steps.vars.outputs.s3_key }}"
+          fi
+          
+          if [ -z "${{ steps.vars.outputs.backend_region }}" ]; then
+            echo "❌ Error: terraform.backend.region is required"
+            EXIT_CODE=1
+          else
+            echo "✅ backend_region: ${{ steps.vars.outputs.backend_region }}"
+          fi
+          
+          # Validação das flags de execução
+          if [ -z "${{ steps.vars.outputs.tf_auto_approve }}" ]; then
+            echo "⚠️  Warning: terraform.auto_approve not set, defaulting to false"
+            echo "tf_auto_approve=false" >> $GITHUB_OUTPUT
+          else
+            echo "✅ tf_auto_approve: ${{ steps.vars.outputs.tf_auto_approve }}"
+          fi
+          
+          if [ -z "${{ steps.vars.outputs.tf_destroy }}" ]; then
+            echo "⚠️  Warning: terraform.destroy not set, defaulting to false"
+            echo "tf_destroy=false" >> $GITHUB_OUTPUT
+          else
+            echo "✅ tf_destroy: ${{ steps.vars.outputs.tf_destroy }}"
+          fi
+          
+          if [ $EXIT_CODE -ne 0 ]; then
+            echo ""
+            echo "❌ Validation failed! Please check your config.yaml file."
             exit 1
           fi
-          echo "✅ All required variables validated"
+          
+          echo ""
+          echo "✅ All required variables validated successfully!"
 
   terraform_apply:
     needs: setup
