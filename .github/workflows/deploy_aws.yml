@@ -8,6 +8,7 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    environment: AWS_CREDENTIALS
 
     steps:
       - name: Checkout repository
@@ -27,16 +28,14 @@ jobs:
         id: config
         run: |
           echo "AWS_REGION=$(yq '.aws.region' config.yaml)" >> $GITHUB_ENV
-          echo "AWS_ACCOUNT_ID=$(yq '.aws.account_id' config.yaml)" >> $GITHUB_ENV
-          echo "S3_BUCKET=$(yq '.aws.s3_bucket' config.yaml)" >> $GITHUB_ENV
+          echo "AWS_ACCOUNT_ID=$(yq '.tarraform.backend.account_id' config.yaml)" >> $GITHUB_ENV
+          echo "S3_BUCKET=$(yq '.tarraform.backend.s3_bucket' config.yaml)" >> $GITHUB_ENV
           echo "TF_AUTO_APPROVE=$(yq '.tarraform.auto_approve' config.yaml)" >> $GITHUB_ENV
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-region: ${{ env.AWS_REGION }}
-          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
-          role-session-name: github-actions
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 
