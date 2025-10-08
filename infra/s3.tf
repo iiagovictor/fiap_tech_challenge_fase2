@@ -17,8 +17,7 @@ resource "aws_s3_object" "app_files" {
   for_each = { 
     for f in fileset("${path.module}/../app", "**/*") : f => f 
     if fileexists("${path.module}/../app/${f}") && 
-       !endswith(f, "/") &&
-       filesize("${path.module}/../app/${f}") >= 0
+       !endswith(f, "/")
   }
   
   bucket = aws_s3_bucket.artifacts.id
