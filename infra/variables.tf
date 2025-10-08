@@ -14,6 +14,14 @@ variable "environment" {
   type        = string
 }
 
+## Table Variables
+
+variable "raw_table_name" {
+  description = "Name of the raw data table"
+  type        = string
+  default     = "tb_techchallenge2_raw_data"
+}
+
 ## Variables for Glue Jobs
 
 variable "glue_max_capacity" {
