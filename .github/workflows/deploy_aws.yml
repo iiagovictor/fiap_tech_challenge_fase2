@@ -27,16 +27,32 @@ jobs:
           sudo wget https://github.com/mikefarah/yq/releases/download/v4.43.1/yq_linux_amd64 -O /usr/bin/yq
           sudo chmod +x /usr/bin/yq
           echo "python_version=$(yq '.setup.python_version // "3.11"' config.yaml)" >> $GITHUB_OUTPUT
-            # Região principal
+          # Região principal
           echo "aws_region=$(yq '.aws.region' config.yaml)" >> $GITHUB_OUTPUT
-            # Backend (mantendo a chave tarraform)
-          echo "aws_account_id=$(yq '.tarraform.backend.account_id' config.yaml)" >> $GITHUB_OUTPUT
-          echo "s3_bucket=$(yq '.tarraform.backend.s3_bucket' config.yaml)" >> $GITHUB_OUTPUT
-          echo "s3_key=$(yq '.tarraform.backend.key' config.yaml)" >> $GITHUB_OUTPUT
-          echo "backend_region=$(yq '.tarraform.backend.region // .aws.region' config.yaml)" >> $GITHUB_OUTPUT
-            # Flags de execução
-          echo "tf_auto_approve=$(yq '.tarraform.auto_approve' config.yaml)" >> $GITHUB_OUTPUT
-          echo "tf_destroy=$(yq '.tarraform.destroy' config.yaml)" >> $GITHUB_OUTPUT
+          # Backend (correção: terraform em vez de tarraform)
+          echo "aws_account_id=$(yq '.terraform.backend.account_id' config.yaml)" >> $GITHUB_OUTPUT
+          echo "s3_bucket=$(yq '.terraform.backend.s3_bucket' config.yaml)" >> $GITHUB_OUTPUT
+          echo "s3_key=$(yq '.terraform.backend.key' config.yaml)" >> $GITHUB_OUTPUT
+          echo "backend_region=$(yq '.terraform.backend.region // .aws.region' config.yaml)" >> $GITHUB_OUTPUT
+          # Flags de execução
+          echo "tf_auto_approve=$(yq '.terraform.auto_approve' config.yaml)" >> $GITHUB_OUTPUT
+          echo "tf_destroy=$(yq '.terraform.destroy' config.yaml)" >> $GITHUB_OUTPUT
+
+      - name: Validate required variables
+        run: |
+          if [ -z "${{ steps.vars.outputs.aws_region }}" ]; then
+            echo "❌ Error: aws_region is required"
+            exit 1
+          fi
+          if [ -z "${{ steps.vars.outputs.s3_bucket }}" ]; then
+            echo "❌ Error: s3_bucket is required"
+            exit 1
+          fi
+          if [ -z "${{ steps.vars.outputs.s3_key }}" ]; then
+            echo "❌ Error: s3_key is required"
+            exit 1
+          fi
+          echo "✅ All required variables validated"
 
   terraform_apply:
     needs: setup
@@ -62,13 +78,14 @@ jobs:
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v3
 
-      - name: Terraform Init (Remote Backend)
+      - name: Terraform Init
         run: |
           cd infra
           terraform init \
             -backend-config="bucket=${{ needs.setup.outputs.s3_bucket }}" \
             -backend-config="key=${{ needs.setup.outputs.s3_key }}" \
-            -backend-config="region=${{ needs.setup.outputs.backend_region }}"
+            -backend-config="region=${{ needs.setup.outputs.backend_region }}" \
+            -backend-config="encrypt=true"
 
       - name: Terraform Plan
         run: |
@@ -78,7 +95,11 @@ jobs:
       - name: Terraform Apply
         run: |
           cd infra
-          terraform apply $([ "${{ needs.setup.outputs.tf_auto_approve }}" = "true" ] && echo "-auto-approve") -input=false -var="aws_region=${{ needs.setup.outputs.aws_region }}"
+          if [ "${{ needs.setup.outputs.tf_auto_approve }}" = "true" ]; then
+            terraform apply -auto-approve -input=false -var="aws_region=${{ needs.setup.outputs.aws_region }}"
+          else
+            terraform apply -input=false -var="aws_region=${{ needs.setup.outputs.aws_region }}"
+          fi
 
   terraform_destroy:
     needs: setup
@@ -104,13 +125,14 @@ jobs:
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v3
 
-      - name: Terraform Init (Remote Backend)
+      - name: Terraform Init
         run: |
           cd infra
           terraform init \
             -backend-config="bucket=${{ needs.setup.outputs.s3_bucket }}" \
             -backend-config="key=${{ needs.setup.outputs.s3_key }}" \
-            -backend-config="region=${{ needs.setup.outputs.backend_region }}"
+            -backend-config="region=${{ needs.setup.outputs.backend_region }}" \
+            -backend-config="encrypt=true"
 
       - name: Terraform Plan (Destroy)
         run: |
