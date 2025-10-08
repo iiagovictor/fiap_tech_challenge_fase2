@@ -1,4 +1,4 @@
-name: PR Automático para main
+name: '[START] Deploy Infra AWS'
 
 on:
   push:
