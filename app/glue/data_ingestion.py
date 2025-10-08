@@ -13,7 +13,7 @@ import pandas as pd
 import awswrangler as wr
 
 # -----------------------------------------------------------------------------
-# Args (Glue) - mantém compat com execução local se awsglue não existir
+# Args (Glue) - compat com execução local se awsglue não existir
 # -----------------------------------------------------------------------------
 try:
     from awsglue.utils import getResolvedOptions
@@ -29,6 +29,14 @@ except Exception:
 # -----------------------------------------------------------------------------
 # Helpers de Glue Catalog
 # -----------------------------------------------------------------------------
+EXPECTED_PARTITION_KEYS = [
+    {"Name": "ano", "Type": "int"},
+    {"Name": "mes", "Type": "int"},
+    {"Name": "dia", "Type": "int"},
+    {"Name": "ticker", "Type": "string"},
+]
+EXPECTED_PK_NAMES = [k["Name"] for k in EXPECTED_PARTITION_KEYS]
+
 def ensure_database(db_name: str):
     glue_client = boto3.client("glue")
     try:
@@ -50,17 +58,10 @@ def ensure_table_4p_from_df(db_name: str, table_name: str, s3_location: str, df_
     Se existir com outra ordem, recria. Se Location divergir, faz update.
     """
     glue_client = boto3.client("glue")
-    expected_keys = [
-        {"Name": "ano", "Type": "int"},
-        {"Name": "mes", "Type": "int"},
-        {"Name": "dia", "Type": "int"},
-        {"Name": "ticker", "Type": "string"},
-    ]
-    expected_names = [k["Name"] for k in expected_keys]
     target_loc = s3_location.rstrip("/")
 
     def build_cols():
-        part_cols = set(expected_names)
+        part_cols = set(EXPECTED_PK_NAMES)
         return [
             {"Name": c, "Type": pandas_dtype_to_glue(df_[c].dtype)}
             for c in df_.columns if c not in part_cols
@@ -84,7 +85,7 @@ def ensure_table_4p_from_df(db_name: str, table_name: str, s3_location: str, df_
                 "Name": table_name,
                 "TableType": "EXTERNAL_TABLE",
                 "Parameters": {"EXTERNAL": "TRUE", "classification": "parquet"},
-                "PartitionKeys": expected_keys,
+                "PartitionKeys": EXPECTED_PARTITION_KEYS,
                 "StorageDescriptor": storage_descriptor,
             },
         )
@@ -95,8 +96,8 @@ def ensure_table_4p_from_df(db_name: str, table_name: str, s3_location: str, df_
         current_keys = [k["Name"] for k in t.get("PartitionKeys", [])]
         current_loc = t["StorageDescriptor"].get("Location", "").rstrip("/")
 
-        if current_keys != expected_names:
-            print(f"[GLUE][FIX] PartitionKeys {current_keys} != {expected_names}. Recriando...")
+        if current_keys != EXPECTED_PK_NAMES:
+            print(f"[GLUE][FIX] PartitionKeys {current_keys} != {EXPECTED_PK_NAMES}. Recriando...")
             glue_client.delete_table(DatabaseName=db_name, Name=table_name)
             create_table()
             return
@@ -110,7 +111,7 @@ def ensure_table_4p_from_df(db_name: str, table_name: str, s3_location: str, df_
                 "Name": table_name,
                 "TableType": t.get("TableType", "EXTERNAL_TABLE"),
                 "Parameters": t.get("Parameters", {"EXTERNAL": "TRUE", "classification": "parquet"}),
-                "PartitionKeys": expected_keys,
+                "PartitionKeys": EXPECTED_PARTITION_KEYS,
                 "StorageDescriptor": sd,
             }
             glue_client.update_table(DatabaseName=db_name, TableInput=table_input)
@@ -119,6 +120,76 @@ def ensure_table_4p_from_df(db_name: str, table_name: str, s3_location: str, df_
             print(f"[GLUE] Tabela OK: keys={current_keys} location={current_loc}")
     except glue_client.exceptions.EntityNotFoundException:
         create_table()
+
+def get_or_fix_partition_keys(glue_client, db: str, table: str, refined_path: str, df_for_schema: pd.DataFrame) -> List[str]:
+    """
+    Retorna os nomes das PartitionKeys. Se estiverem ausentes ou divergentes, recria/atualiza a tabela.
+    """
+    t = glue_client.get_table(DatabaseName=db, Name=table)["Table"]
+    current_keys = [k["Name"] for k in t.get("PartitionKeys", [])]
+    if current_keys != EXPECTED_PK_NAMES:
+        print(f"[GLUE][WARN] PartitionKeys ausentes ou incorretas: {current_keys}. Ajustando tabela...")
+        ensure_table_4p_from_df(db, table, refined_path, df_for_schema)
+        t = glue_client.get_table(DatabaseName=db, Name=table)["Table"]
+        current_keys = [k["Name"] for k in t.get("PartitionKeys", [])]
+    if current_keys != EXPECTED_PK_NAMES:
+        raise RuntimeError(f"PartitionKeys continuam incorretas após ajuste: {current_keys}")
+    return current_keys
+
+# -----------------------------------------------------------------------------
+# Atualização do SCHEMA no Glue a partir de um Parquet de exemplo
+# -----------------------------------------------------------------------------
+def update_glue_table_schema_from_sample(refined_db: str, refined_table: str, refined_path: str) -> None:
+    """
+    Lê um parquet dentro de refined_path e atualiza o Schema (Columns) da tabela,
+    mantendo as PartitionKeys e o restante do StorageDescriptor.
+    """
+    print("[SCHEMA] Atualizando schema a partir de um parquet de exemplo...")
+    s3 = boto3.client("s3")
+    glue = boto3.client("glue")
+
+    # 1) encontra um parquet
+    m = re.match(r"s3://([^/]+)/(.+)", refined_path)
+    assert m, f"REFINED_PATH inválido: {refined_path}"
+    bucket, prefix = m.group(1), m.group(2)
+
+    paginator = s3.get_paginator("list_objects_v2")
+    key_sample = None
+    for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+        for c in page.get("Contents", []):
+            if c["Key"].endswith(".parquet"):
+                key_sample = c["Key"]
+                break
+        if key_sample:
+            break
+    if not key_sample:
+        print("[SCHEMA][WARN] Nenhum parquet encontrado em refined; mantendo schema atual.")
+        return
+
+    body = s3.get_object(Bucket=bucket, Key=key_sample)["Body"].read()
+    df   = pd.read_parquet(BytesIO(body))
+
+    # 2) mapeia pandas -> Glue (ignorando colunas de partição)
+    part_cols = set(EXPECTED_PK_NAMES)
+    columns = [{"Name": c, "Type": pandas_dtype_to_glue(df[c].dtype)}
+               for c in df.columns if c not in part_cols]
+
+    # 3) lê a tabela, mantém PartitionKeys (ou seta se ausentes), e atualiza Columns
+    t = glue.get_table(DatabaseName=refined_db, Name=refined_table)["Table"]
+    sd = t["StorageDescriptor"]
+    sd["Columns"] = columns
+
+    pkeys = t.get("PartitionKeys") or EXPECTED_PARTITION_KEYS  # fallback se vier vazio
+    table_input = {
+        "Name": refined_table,
+        "TableType": t.get("TableType", "EXTERNAL_TABLE"),
+        "Parameters": t.get("Parameters", {"EXTERNAL":"TRUE","classification":"parquet"}),
+        "PartitionKeys": pkeys,
+        "StorageDescriptor": sd,
+    }
+
+    glue.update_table(DatabaseName=refined_db, TableInput=table_input)
+    print("[SCHEMA][OK] Schema atualizado com colunas:", [c["Name"] for c in columns])
 
 # -----------------------------------------------------------------------------
 # Descoberta de arquivos: 1 arquivo ou todos os dias de um prefixo
@@ -201,9 +272,9 @@ def main():
     ensure_table_4p_from_df(refined_db, refined_table, refined_path, df_first)
 
     glue = boto3.client("glue")
-    tinfo = glue.get_table(DatabaseName=refined_db, Name=refined_table)
-    table_keys = [k["Name"] for k in tinfo["Table"]["PartitionKeys"]]
-    catalog_loc = tinfo["Table"]["StorageDescriptor"]["Location"].rstrip("/")
+    # Usa helper robusto para garantir PartitionKeys corretas (evita KeyError)
+    table_keys = get_or_fix_partition_keys(glue, refined_db, refined_table, refined_path, df_first)
+    catalog_loc = glue.get_table(DatabaseName=refined_db, Name=refined_table)["Table"]["StorageDescriptor"]["Location"].rstrip("/")
     assert refined_path.rstrip("/") == catalog_loc, f"Path divergente: {refined_path} != {catalog_loc}"
     print(f"[CHECK] PartitionKeys no Glue = {table_keys}")
 
@@ -279,13 +350,13 @@ def main():
     # Registro no catálogo via boto3
     tinfo = glue.get_table(DatabaseName=refined_db, Name=refined_table)["Table"]
     base_sd = tinfo["StorageDescriptor"]
-    table_keys = [k["Name"] for k in tinfo["PartitionKeys"]]
+    table_keys = [k["Name"] for k in tinfo.get("PartitionKeys", EXPECTED_PARTITION_KEYS)]
 
     def _to_str(v):
         return str(int(v)) if isinstance(v, (int, float)) and not isinstance(v, bool) else str(v)
 
     def make_partition_input(p):
-        values_in_order = [_to_str(p[k]) for k in table_keys]
+        values_in_order = [_to_str(p[k]) for k in [k["Name"] for k in EXPECTED_PARTITION_KEYS]]
         part_location = (
             f"{refined_path.rstrip('/')}/"
             f"ano={int(p['ano']):04d}/mes={int(p['mes']):02d}/dia={int(p['dia']):02d}/ticker={p['ticker']}/"
@@ -331,6 +402,10 @@ def main():
         created += len(batch) - len(resp.get("Errors", []))
 
     print(f"[OK] Partições registradas via boto3: {created}/{len(particoes_escritas)}")
+
+    # Atualiza SCHEMA no final (a partir de um parquet de refined)
+    update_glue_table_schema_from_sample(refined_db, refined_table, refined_path)
+
     print("[DONE] Job finalizado com sucesso.")
 
 if __name__ == "__main__":
