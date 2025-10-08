@@ -1,5 +1,4 @@
 setup:
-  runs-on: "ubuntu-latest"
   python_version: "3.11"
 
 aws:

@@ -7,7 +7,7 @@ on:
 
 jobs:
   setup:
-    runs-on: ${{ fromJson('["' + (steps.vars.outputs.runs_on || 'ubuntu-latest') + '"]') }}
+    runs-on: ubuntu-latest
     outputs:
       python_version: ${{ steps.vars.outputs.python_version }}
       aws_region: ${{ steps.vars.outputs.aws_region }}
@@ -30,7 +30,6 @@ jobs:
           echo "s3_bucket=$(yq '.tarraform.backend.s3_bucket' config.yaml)" >> $GITHUB_OUTPUT
           echo "tf_auto_approve=$(yq '.tarraform.auto_approve' config.yaml)" >> $GITHUB_OUTPUT
           echo "tf_destroy=$(yq '.tarraform.destroy' config.yaml)" >> $GITHUB_OUTPUT
-          echo "runs_on=$(yq '.setup.runs-on // "ubuntu-latest"' config.yaml)" >> $GITHUB_OUTPUT
 
   aws_credentials:
     needs: setup
