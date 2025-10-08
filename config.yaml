@@ -1,3 +1,7 @@
+setup:
+  runs-on: "ubuntu-latest"
+  python_version: "3.11"
+
 aws:
   region: "us-east-1"
 
