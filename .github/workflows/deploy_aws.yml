@@ -13,6 +13,8 @@ jobs:
       aws_region: ${{ steps.vars.outputs.aws_region }}
       aws_account_id: ${{ steps.vars.outputs.aws_account_id }}
       s3_bucket: ${{ steps.vars.outputs.s3_bucket }}
+      s3_key: ${{ steps.vars.outputs.s3_key }}
+      backend_region: ${{ steps.vars.outputs.backend_region }}
       tf_auto_approve: ${{ steps.vars.outputs.tf_auto_approve }}
       tf_destroy: ${{ steps.vars.outputs.tf_destroy }}
     steps:
@@ -25,9 +27,14 @@ jobs:
           sudo wget https://github.com/mikefarah/yq/releases/download/v4.43.1/yq_linux_amd64 -O /usr/bin/yq
           sudo chmod +x /usr/bin/yq
           echo "python_version=$(yq '.setup.python_version // "3.11"' config.yaml)" >> $GITHUB_OUTPUT
+            # Região principal
           echo "aws_region=$(yq '.aws.region' config.yaml)" >> $GITHUB_OUTPUT
+            # Backend (mantendo a chave tarraform)
           echo "aws_account_id=$(yq '.tarraform.backend.account_id' config.yaml)" >> $GITHUB_OUTPUT
           echo "s3_bucket=$(yq '.tarraform.backend.s3_bucket' config.yaml)" >> $GITHUB_OUTPUT
+          echo "s3_key=$(yq '.tarraform.backend.key' config.yaml)" >> $GITHUB_OUTPUT
+          echo "backend_region=$(yq '.tarraform.backend.region // .aws.region' config.yaml)" >> $GITHUB_OUTPUT
+            # Flags de execução
           echo "tf_auto_approve=$(yq '.tarraform.auto_approve' config.yaml)" >> $GITHUB_OUTPUT
           echo "tf_destroy=$(yq '.tarraform.destroy' config.yaml)" >> $GITHUB_OUTPUT
 
@@ -55,10 +62,13 @@ jobs:
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v3
 
-      - name: Terraform Init
+      - name: Terraform Init (Remote Backend)
         run: |
           cd infra
-          terraform init
+          terraform init \
+            -backend-config="bucket=${{ needs.setup.outputs.s3_bucket }}" \
+            -backend-config="key=${{ needs.setup.outputs.s3_key }}" \
+            -backend-config="region=${{ needs.setup.outputs.backend_region }}"
 
       - name: Terraform Plan
         run: |
@@ -94,10 +104,13 @@ jobs:
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v3
 
-      - name: Terraform Init
+      - name: Terraform Init (Remote Backend)
         run: |
           cd infra
-          terraform init
+          terraform init \
+            -backend-config="bucket=${{ needs.setup.outputs.s3_bucket }}" \
+            -backend-config="key=${{ needs.setup.outputs.s3_key }}" \
+            -backend-config="region=${{ needs.setup.outputs.backend_region }}"
 
       - name: Terraform Plan (Destroy)
         run: |

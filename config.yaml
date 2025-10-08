@@ -5,7 +5,7 @@ aws:
   region: "us-east-1"
 
 tarraform:
-  destroy: true
+  destroy: false
   auto_approve: true
   backend:
     s3_bucket: "terraform-state-197045787308"
