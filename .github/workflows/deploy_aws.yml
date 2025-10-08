@@ -132,17 +132,75 @@ jobs:
         with:
           python-version: ${{ needs.setup.outputs.python_version }}
 
+      - name: Create S3 Backend Bucket if not exists
+        run: |
+          BUCKET_NAME="${{ needs.setup.outputs.s3_bucket }}"
+          REGION="${{ needs.setup.outputs.backend_region }}"
+          
+          echo "🔍 Checking if bucket $BUCKET_NAME exists..."
+          
+          if aws s3 ls "s3://$BUCKET_NAME" 2>&1 | grep -q 'NoSuchBucket'; then
+            echo "📦 Bucket does not exist. Creating..."
+            
+            if [ "$REGION" = "us-east-1" ]; then
+              aws s3api create-bucket --bucket "$BUCKET_NAME" --region "$REGION"
+            else
+              aws s3api create-bucket \
+                --bucket "$BUCKET_NAME" \
+                --region "$REGION" \
+                --create-bucket-configuration LocationConstraint="$REGION"
+            fi
+            
+            echo "🔐 Enabling versioning..."
+            aws s3api put-bucket-versioning \
+              --bucket "$BUCKET_NAME" \
+              --versioning-configuration Status=Enabled
+            
+            echo "🔒 Enabling encryption..."
+            aws s3api put-bucket-encryption \
+              --bucket "$BUCKET_NAME" \
+              --server-side-encryption-configuration '{
+                "Rules": [{
+                  "ApplyServerSideEncryptionByDefault": {
+                    "SSEAlgorithm": "AES256"
+                  }
+                }]
+              }'
+            
+            echo "🚫 Blocking public access..."
+            aws s3api put-public-access-block \
+              --bucket "$BUCKET_NAME" \
+              --public-access-block-configuration \
+                BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+            
+            echo "✅ Bucket $BUCKET_NAME created and configured successfully!"
+          else
+            echo "✅ Bucket $BUCKET_NAME already exists"
+          fi
+
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v3
+
+      - name: Create Terraform Backend Configuration
+        run: |
+          cd infra
+          cat > backend.tf <<EOF
+          terraform {
+            backend "s3" {
+              bucket  = "${{ needs.setup.outputs.s3_bucket }}"
+              key     = "${{ needs.setup.outputs.s3_key }}"
+              region  = "${{ needs.setup.outputs.backend_region }}"
+              encrypt = true
+            }
+          }
+          EOF
+          echo "✅ backend.tf created successfully"
+          cat backend.tf
 
       - name: Terraform Init
         run: |
           cd infra
-          terraform init \
-            -backend-config="bucket=${{ needs.setup.outputs.s3_bucket }}" \
-            -backend-config="key=${{ needs.setup.outputs.s3_key }}" \
-            -backend-config="region=${{ needs.setup.outputs.backend_region }}" \
-            -backend-config="encrypt=true"
+          terraform init
 
       - name: Terraform Plan
         run: |
@@ -182,14 +240,25 @@ jobs:
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v3
 
+      - name: Create Terraform Backend Configuration
+        run: |
+          cd infra
+          cat > backend.tf <<EOF
+          terraform {
+            backend "s3" {
+              bucket  = "${{ needs.setup.outputs.s3_bucket }}"
+              key     = "${{ needs.setup.outputs.s3_key }}"
+              region  = "${{ needs.setup.outputs.backend_region }}"
+              encrypt = true
+            }
+          }
+          EOF
+          echo "✅ backend.tf created successfully"
+
       - name: Terraform Init
         run: |
           cd infra
-          terraform init \
-            -backend-config="bucket=${{ needs.setup.outputs.s3_bucket }}" \
-            -backend-config="key=${{ needs.setup.outputs.s3_key }}" \
-            -backend-config="region=${{ needs.setup.outputs.backend_region }}" \
-            -backend-config="encrypt=true"
+          terraform init
 
       - name: Terraform Plan (Destroy)
         run: |
