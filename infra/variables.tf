@@ -3,3 +3,8 @@ variable "project_name" {
   type        = string
   default     = "techchallenge2"
 }
+
+variable "aws_region" {
+  description = "AWS region"
+  type        = string
+}
