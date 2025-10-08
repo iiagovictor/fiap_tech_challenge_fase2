@@ -9,7 +9,7 @@ jobs:
   pull-request:
     name: Criar PR automático para main
     runs-on: ubuntu-latest
-    needs: build
+    # Removido: needs: build
     
     permissions:
       contents: write
@@ -31,5 +31,9 @@ jobs:
           title: 'Auto PR - Merge ${{ github.ref_name }} into main'
           body: |
             Este PR foi criado automaticamente para merge do branch `${{ github.ref_name }}` para `main`.
+            
+            **Branch de origem:** `${{ github.ref_name }}`
+            **Commit:** ${{ github.sha }}
+            **Autor:** @${{ github.actor }}
           draft: false
           allow_no_diff: true
