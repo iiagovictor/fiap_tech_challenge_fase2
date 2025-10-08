@@ -6,10 +6,48 @@ on:
       - main
 
 jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    environment: AWS_CREDENTIALS
+  setup:
+    runs-on: ${{ fromJson('["' + (steps.vars.outputs.runs_on || 'ubuntu-latest') + '"]') }}
+    outputs:
+      python_version: ${{ steps.vars.outputs.python_version }}
+      aws_region: ${{ steps.vars.outputs.aws_region }}
+      aws_account_id: ${{ steps.vars.outputs.aws_account_id }}
+      s3_bucket: ${{ steps.vars.outputs.s3_bucket }}
+      tf_auto_approve: ${{ steps.vars.outputs.tf_auto_approve }}
+      tf_destroy: ${{ steps.vars.outputs.tf_destroy }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
+      - name: Install yq and read config.yaml variables
+        id: vars
+        run: |
+          sudo wget https://github.com/mikefarah/yq/releases/download/v4.43.1/yq_linux_amd64 -O /usr/bin/yq
+          sudo chmod +x /usr/bin/yq
+          echo "python_version=$(yq '.setup.python_version // "3.11"' config.yaml)" >> $GITHUB_OUTPUT
+          echo "aws_region=$(yq '.aws.region' config.yaml)" >> $GITHUB_OUTPUT
+          echo "aws_account_id=$(yq '.tarraform.backend.account_id' config.yaml)" >> $GITHUB_OUTPUT
+          echo "s3_bucket=$(yq '.tarraform.backend.s3_bucket' config.yaml)" >> $GITHUB_OUTPUT
+          echo "tf_auto_approve=$(yq '.tarraform.auto_approve' config.yaml)" >> $GITHUB_OUTPUT
+          echo "tf_destroy=$(yq '.tarraform.destroy' config.yaml)" >> $GITHUB_OUTPUT
+          echo "runs_on=$(yq '.setup.runs-on // "ubuntu-latest"' config.yaml)" >> $GITHUB_OUTPUT
+
+  aws_credentials:
+    needs: setup
+    runs-on: ubuntu-latest
+    environment: prod
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ needs.setup.outputs.aws_region }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+  terraform_apply:
+    needs: [setup, aws_credentials]
+    if: ${{ needs.setup.outputs.tf_destroy != 'true' }}
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -17,39 +55,53 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
-
-      - name: Install yq
-        run: |
-          sudo wget https://github.com/mikefarah/yq/releases/download/v4.43.1/yq_linux_amd64 -O /usr/bin/yq
-          sudo chmod +x /usr/bin/yq
-
-      - name: Read config.yaml variables
-        id: config
-        run: |
-          echo "AWS_REGION=$(yq '.aws.region' config.yaml)" >> $GITHUB_ENV
-          echo "AWS_ACCOUNT_ID=$(yq '.tarraform.backend.account_id' config.yaml)" >> $GITHUB_ENV
-          echo "S3_BUCKET=$(yq '.tarraform.backend.s3_bucket' config.yaml)" >> $GITHUB_ENV
-          echo "TF_AUTO_APPROVE=$(yq '.tarraform.auto_approve' config.yaml)" >> $GITHUB_ENV
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-region: ${{ env.AWS_REGION }}
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          python-version: ${{ needs.setup.outputs.python_version }}
 
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v3
 
       - name: Terraform Init
-        run: terraform init
-        working-directory: infra
+        run: |
+          cd infra
+          terraform init
 
       - name: Terraform Plan
-        run: terraform plan -input=false
-        working-directory: infra
+        run: |
+          cd infra
+          terraform plan -input=false
 
       - name: Terraform Apply
-        run: terraform apply ${{ env.TF_AUTO_APPROVE == 'true' && '-auto-approve' || '' }} -input=false
-        working-directory: infra
+        run: |
+          cd infra
+          terraform apply $([ "${{ needs.setup.outputs.tf_auto_approve }}" = "true" ] && echo "-auto-approve") -input=false
+
+  terraform_destroy:
+    needs: [setup, aws_credentials]
+    if: ${{ needs.setup.outputs.tf_destroy == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ needs.setup.outputs.python_version }}
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Init
+        run: |
+          cd infra
+          terraform init
+
+      - name: Terraform Plan (Destroy)
+        run: |
+          cd infra
+          terraform plan -destroy -input=false
+
+      - name: Terraform Destroy
+        run: |
+          cd infra
+          terraform destroy -auto-approve -input=false
