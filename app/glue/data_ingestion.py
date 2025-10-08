@@ -219,7 +219,7 @@ try:
     if head.get("KeyCount", 0) == 0:
         print("Arquivo de partição não encontrado")  # <- sua mensagem pedida
         # opcional: sair “limpo” do job
-        #sys.exit(0)
+        sys.exit(0)
         
     response = s3_client.get_object(Bucket=bucket_name, Key=object_key)
     file_content = response['Body'].read()
@@ -295,9 +295,13 @@ try:
             df_mm_dia = df_all[(df_all["ano"]==ano_at)&(df_all["mes"]==mes_at)&(df_all["dia"]==dia_at)]
     
             # merge por ticker (garanta que seu df final tem 'ticker')
-            if "ticker" not in df.columns and "ticker" in df.columns:
-                # cria coluna auxiliar para casar com 'ticker' de df_mm_dia
+            # se não existir ticker, não tem como fazer merge – apenas loga/continua
+            if "ticker" in df.columns:
                 df["ticker"] = df["ticker"].astype(str)
+                df = df.merge(df_mm_dia[["ticker", "Media_Movel"]], on="ticker", how="left")
+            else:
+                print("[MM7] Não foi possível fazer merge: coluna 'ticker' ausente no DF atual.")
+
     
             if "ticker" in df.columns:
                 df = df.merge(
@@ -356,9 +360,6 @@ try:
     
     print("[DEBUG] Exemplos de partições no DF (até 10):")
     print(df[["ano","mes","dia","ticker"]].drop_duplicates().head(10))
-    
-        
-        
         
     # Caminho base refined (mesmo bucket do input, ajuste se quiser outro)
     refined_base_prefix = re.sub(r"(^.*?)(?=ano=\d{4}/mes=\d{1,2}/dia=\d{1,2})", "refined/", base_prefix)
@@ -374,14 +375,19 @@ try:
     refined_table  = args['REFINED_TABLE']                  # ex: refined_b3
 
 
-    # === normaliza args de saída (USE PREFIXO LIMPO) ===
-    # === normaliza args de saída ===
-    refined_bucket = re.sub(r'^s3://', '', args['REFINED_BUCKET']).split('/')[0]
-    refined_prefix = args['REFINED_PREFIX'].strip('/') + '/'  # ex.: refined/
-    refined_db     = args['REFINED_DB']
-    refined_table  = args['REFINED_TABLE']  # evite hífen aqui!
+    # LOCATION_PATH
+    s3_file_path = args['LOCATION_PATH']     # ex: s3://.../ano=YYYY/mes=MM/dia=DD/finance.parquet
+    bucket_name = s3_file_path.replace("s3://", "").split("/", 1)[0]
+    object_key  = s3_file_path.replace("s3://", "").split("/", 1)[1]
     
-    refined_path = f"s3://{refined_bucket}/{refined_prefix}"
+    # TARGET (refined)
+    refined_bucket = re.sub(r'^s3://', '', args['REFINED_BUCKET']).split('/')[0]
+    refined_prefix = args['REFINED_PREFIX'].strip('/') + '/'
+    refined_db     = args['REFINED_DB']
+    refined_table  = args['REFINED_TABLE']
+    
+    refined_path   = f"s3://{refined_bucket}/{refined_prefix}"  # use ESTE em tudo (catálogo e write)
+
     print(f"[INFO] Path target  = {refined_path}")
     print(f"[INFO] Glue target  = {refined_db}.{refined_table}")
     
@@ -397,69 +403,38 @@ try:
     table_keys = [k["Name"] for k in tinfo["Table"]["PartitionKeys"]]
     print(f"[CHECK] PartitionKeys no Glue = {table_keys}")  # deve imprimir ['ano','mes','dia','ticker']
     
+    print('Printando refined path, db e table:')
+    print(refined_path)
+    print(refined_db)
+    print(refined_table)
+    print(tinfo)
+    
+    
+    catalog_loc = tinfo["Table"]["StorageDescriptor"]["Location"].rstrip("/")
+    assert refined_path.rstrip("/") == catalog_loc, f"Path divergente: {refined_path} != {catalog_loc}"
+
+    
     # 4) escreva usando a MESMA ordem de partição e o MESMO path
     wr.s3.to_parquet(
         df=df,
-        path=refined_path,               # <<< mesmo Location usado na criação
+        path=refined_path,          # TEM QUE ser igual ao Location do catálogo
         dataset=True,
         mode="append",
-        partition_cols=table_keys,       # ['ano','mes','dia','ticker']
-        database=refined_db,             # passando db/table, o wrangler registra as partições no Glue
-        table=refined_table
+        partition_cols=table_keys,  # ['ano','mes','dia','ticker']
+        database=refined_db,
+        table=refined_table,
     )
+    
+    
+    
     print("[OK] wr.s3.to_parquet finalizado.")
-
-
-    ######################################
-    #Teste pra ver se pega o erro
-    import re
-
-    bad = []
-    regex_ok = re.compile(
-        r".*/ano=\d{4}/mes=\d{2}/dia=\d{2}/ticker=[^/]+/[^/]+\.parquet$"
-    )
-    
-    s3c = boto3.client("s3")
-    bkt = refined_bucket
-    pref = refined_prefix  # ex.: 'refined/' ou 'refined/v2/'
-    
-    token = None
-    checked = 0
-    while True:
-        kw = {"Bucket": bkt, "Prefix": pref}
-        if token: kw["ContinuationToken"] = token
-        resp = s3c.list_objects_v2(**kw)
-        for obj in resp.get("Contents", []):
-            key = obj["Key"]
-            # ignore “pastas”
-            if key.endswith("/"):
-                continue
-            checked += 1
-            if not regex_ok.match(f"s3://{bkt}/{key}"):
-                bad.append(key)
-            if checked >= 200:  # não precisa listar tudo; é só diagnóstico
-                break
-        if checked >= 200 or not resp.get("IsTruncated"):
-            break
-        token = resp.get("NextContinuationToken")
-    
-    if bad:
-        print("[DIAG] Objetos fora do layout ano/mes/dia/ticker (mostrando até 20):")
-        for k in bad[:20]:
-            print("   -", k)
-        raise RuntimeError(
-            "Há objetos no prefixo refined que NÃO seguem o layout de 4 partições. "
-            "Mude --REFINED_PREFIX para um diretório novo (ex.: refined/v2/) "
-            "OU remova/mova os objetos listados acima."
-        )
-    else:
-        print("[DIAG] Prefixo limpo: só há arquivos com ano/mes/dia/ticker.")
     
     
-except Exception:
+except Exception as e:
     print("Erro ao processar o arquivo:")
     traceback.print_exc()   # mostra exatamente a linha/origem real
-    raise
+    print(e)
+    raise e
 
 print("Job Python Shell finalizado com sucesso.")
     
