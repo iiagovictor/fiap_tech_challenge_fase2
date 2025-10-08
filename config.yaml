@@ -7,3 +7,4 @@ tarraform:
   backend:
     bucket: "terraform-state-197045787308"
     key: "techchallenge2/terraform.tfstate"
+    region: "us-east-1"
