@@ -27,7 +27,6 @@ jobs:
         id: config
         run: |
           echo "AWS_REGION=$(yq '.aws.region' config.yaml)" >> $GITHUB_ENV
-          echo "AWS_PROFILE=$(yq '.aws.profile' config.yaml)" >> $GITHUB_ENV
           echo "AWS_ACCOUNT_ID=$(yq '.aws.account_id' config.yaml)" >> $GITHUB_ENV
           echo "S3_BUCKET=$(yq '.aws.s3_bucket' config.yaml)" >> $GITHUB_ENV
           echo "TF_AUTO_APPROVE=$(yq '.tarraform.auto_approve' config.yaml)" >> $GITHUB_ENV
