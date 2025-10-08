@@ -9,7 +9,6 @@ jobs:
   pull-request:
     name: Criar PR automático para main
     runs-on: ubuntu-latest
-    # Removido: needs: build
     
     permissions:
       contents: write
