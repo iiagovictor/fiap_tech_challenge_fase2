@@ -205,15 +205,21 @@ jobs:
       - name: Terraform Plan
         run: |
           cd infra
-          terraform plan -input=false -var="aws_region=${{ needs.setup.outputs.aws_region }}"
+          terraform plan -input=false \
+            -var-file="inventories/prod.tfvars" \
+            -var="aws_region=${{ needs.setup.outputs.aws_region }}"
 
       - name: Terraform Apply
         run: |
           cd infra
           if [ "${{ needs.setup.outputs.tf_auto_approve }}" = "true" ]; then
-            terraform apply -auto-approve -input=false -var="aws_region=${{ needs.setup.outputs.aws_region }}"
+            terraform apply -auto-approve -input=false \
+              -var-file="inventories/prod.tfvars" \
+              -var="aws_region=${{ needs.setup.outputs.aws_region }}"
           else
-            terraform apply -input=false -var="aws_region=${{ needs.setup.outputs.aws_region }}"
+            terraform apply -input=false \
+              -var-file="inventories/prod.tfvars" \
+              -var="aws_region=${{ needs.setup.outputs.aws_region }}"
           fi
 
   terraform_destroy:
@@ -263,9 +269,13 @@ jobs:
       - name: Terraform Plan (Destroy)
         run: |
           cd infra
-          terraform plan -destroy -input=false -var="aws_region=${{ needs.setup.outputs.aws_region }}"
+          terraform plan -destroy -input=false \
+            -var-file="inventories/prod.tfvars" \
+            -var="aws_region=${{ needs.setup.outputs.aws_region }}"
 
       - name: Terraform Destroy
         run: |
           cd infra
-          terraform destroy -auto-approve -input=false -var="aws_region=${{ needs.setup.outputs.aws_region }}"
+          terraform destroy -auto-approve -input=false \
+            -var-file="inventories/prod.tfvars" \
+            -var="aws_region=${{ needs.setup.outputs.aws_region }}"
