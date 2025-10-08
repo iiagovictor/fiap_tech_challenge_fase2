@@ -1,4 +1,4 @@
-name: PR Automático para main
+name: '[START] Validate and Create PR to Main'
 
 on:
   push:
