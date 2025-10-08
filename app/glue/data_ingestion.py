@@ -8,6 +8,7 @@ import pyarrow as pa, pyarrow.parquet as pq
 import awswrangler as wr
 import re
 import traceback
+from uuid import uuid4
 
 #Funcoes auxiliares
 def verifico_existencia_particao(database_name: str, table_name: str) -> Dict[str, Any]:
@@ -413,20 +414,125 @@ try:
     catalog_loc = tinfo["Table"]["StorageDescriptor"]["Location"].rstrip("/")
     assert refined_path.rstrip("/") == catalog_loc, f"Path divergente: {refined_path} != {catalog_loc}"
 
+    # --- 1) sanity de partição ---
+    # (use o patch de sanitização de 'ticker' que mandei antes!)
+    cols_part = ["ano", "mes", "dia", "ticker"]
+    missing = [c for c in cols_part if c not in df.columns]
+    if missing:
+        raise ValueError(f"Faltam colunas de partição: {missing}")
     
-    # 4) escreva usando a MESMA ordem de partição e o MESMO path
-    wr.s3.to_parquet(
-        df=df,
-        path=refined_path,          # TEM QUE ser igual ao Location do catálogo
-        dataset=True,
-        mode="append",
-        partition_cols=table_keys,  # ['ano','mes','dia','ticker']
-        database=refined_db,
-        table=refined_table,
+    for c in ["ano","mes","dia"]:
+        df[c] = pd.to_numeric(df[c], errors="coerce")
+    df["ticker"] = (
+        df["ticker"].astype(str).str.strip().str.upper()
+          .replace({"": pd.NA, "NAN": pd.NA})
+          .str.replace(r"[/=\\]", "-", regex=True)
+          .str.replace(r"[^A-Z0-9._-]", "_", regex=True)
     )
+    df = df.dropna(subset=["ano","mes","dia","ticker"]).copy()
+    df["ano"] = df["ano"].astype(int)
+    df["mes"] = df["mes"].astype(int)
+    df["dia"] = df["dia"].astype(int)
     
+    print("[DEBUG] Partições únicas deste batch:")
+    print(df[cols_part].drop_duplicates().head(20))
     
+    # --- 2) escreve agrupando por partição, sem dataset (sem varrer prefixo) ---
+    particoes_escritas = []
+    for (a, m, d, t), g in df.groupby(cols_part, dropna=False):
+        # caminho exato da partição alvo
+        part_path = f"{refined_path.rstrip('/')}/ano={a:04d}/mes={m:02d}/dia={d:02d}/ticker={t}/"
+        # nome de arquivo único pra evitar colisão
+        obj = f"{part_path}part-{uuid4().hex}.parquet"
     
+        # escreve SOMENTE esse grupo, sem 'dataset'
+        wr.s3.to_parquet(
+            df=g.drop(columns=[c for c in cols_part if c in g.columns], errors="ignore"),
+            path=obj,
+            dataset=False,
+            schema_evolution=True,
+            # database/table INTENCIONALMENTE não informados aqui
+        )
+    
+        particoes_escritas.append({"ano": a, "mes": m, "dia": d, "ticker": str(t)})
+        
+
+
+
+        
+         # --- 3) REGISTRO DE PARTIÇÕES VIA BOTO3 (robusto) ---
+        glue = boto3.client("glue")
+        
+        # Leia o SD da tabela para herdar formatos/serde/columns
+        tinfo = glue.get_table(DatabaseName=refined_db, Name=refined_table)["Table"]
+        base_sd = tinfo["StorageDescriptor"]
+        table_keys = [k["Name"] for k in tinfo["PartitionKeys"]]  # deve ser ['ano','mes','dia','ticker']
+        
+        def _to_str(v):
+            return str(int(v)) if isinstance(v, (int, float)) and not isinstance(v, bool) else str(v)
+        
+        def make_partition_input(p):
+            # p = {"ano": 2025, "mes": 9, "dia": 30, "ticker": "ABEV3"}
+            # 1) Values em ORDEM das keys
+            values_in_order = [_to_str(p[k]) for k in table_keys]  # ['2025','9','30','ABEV3']
+        
+            # 2) Location completo da partição
+            part_location = (
+                f"{refined_path.rstrip('/')}/"
+                f"ano={int(p['ano']):04d}/mes={int(p['mes']):02d}/dia={int(p['dia']):02d}/ticker={p['ticker']}/"
+            )
+        
+            return {
+                "Values": values_in_order,
+                "StorageDescriptor": {
+                    "Columns": base_sd.get("Columns", []),
+                    "Location": part_location,
+                    "InputFormat": base_sd.get("InputFormat"),
+                    "OutputFormat": base_sd.get("OutputFormat"),
+                    "SerdeInfo": base_sd.get("SerdeInfo"),
+                    "Compressed": base_sd.get("Compressed", False),
+                    "NumberOfBuckets": base_sd.get("NumberOfBuckets", 0),
+                    "StoredAsSubDirectories": base_sd.get("StoredAsSubDirectories", False),
+                    "Parameters": base_sd.get("Parameters", {}),
+                },
+                "Parameters": {},
+            }
+        
+        # DEBUG opcional (conferir 1 exemplo)
+        if particoes_escritas:
+            ex = make_partition_input(particoes_escritas[0])
+            print("[DEBUG] Values exemplo:", ex["Values"])
+            print("[DEBUG] Location exemplo:", ex["StorageDescriptor"]["Location"])
+        
+        # Envie em lotes de até 100
+        batch, created = [], 0
+        for p in particoes_escritas:
+            batch.append(make_partition_input(p))
+            if len(batch) == 100:
+                resp = glue.batch_create_partition(
+                    DatabaseName=refined_db,
+                    TableName=refined_table,
+                    PartitionInputList=batch
+                )
+                if resp.get("Errors"):
+                    print("[WARN] Erros:", resp["Errors"][:5])
+                created += len(batch) - len(resp.get("Errors", []))
+                batch = []
+        
+        if batch:
+            resp = glue.batch_create_partition(
+                DatabaseName=refined_db,
+                TableName=refined_table,
+                PartitionInputList=batch
+            )
+            if resp.get("Errors"):
+                print("[WARN] Erros (resto):", resp["Errors"][:5])
+            created += len(batch) - len(resp.get("Errors", []))
+        
+        print(f"[OK] Partições registradas via boto3: {created}/{len(particoes_escritas)}")
+           
+        
+        
     print("[OK] wr.s3.to_parquet finalizado.")
     
     
