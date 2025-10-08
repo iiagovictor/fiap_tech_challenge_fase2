@@ -5,7 +5,7 @@ resource "aws_glue_job" "data_extraction" {
   role_arn          = aws_iam_role.glue_role.arn
   command {
     name            = "pythonshell"
-    script_location = "s3://${aws_s3_bucket.artifacts.bucket}/glue-scripts/data_extraction.py"
+    script_location = "s3://${aws_s3_bucket.artifacts.bucket}/${var.project_name}/app/glue/data_extraction.py"
     python_version  = var.python_version
   }
   max_capacity      = var.glue_max_capacity
@@ -24,7 +24,7 @@ resource "aws_glue_job" "data_ingestion" {
   role_arn          = aws_iam_role.glue_role.arn
   command {
     name            = "pythonshell"
-    script_location = "s3://${aws_s3_bucket.artifacts.bucket}/glue-scripts/data_ingestion.py"
+    script_location = "s3://${aws_s3_bucket.artifacts.bucket}/${var.project_name}/app/glue/data_ingestion.py"
     python_version  = var.python_version
   }
   max_capacity      = var.glue_max_capacity
