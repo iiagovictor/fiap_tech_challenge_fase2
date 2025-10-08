@@ -33,6 +33,7 @@ jobs:
           echo "aws_account_id=$(yq '.tarraform.backend.account_id' config.yaml)" >> $GITHUB_OUTPUT
           echo "s3_bucket=$(yq '.tarraform.backend.s3_bucket' config.yaml)" >> $GITHUB_OUTPUT
           echo "s3_key=$(yq '.tarraform.backend.key' config.yaml)" >> $GITHUB_OUTPUT
+          echo "backend_region=$(yq '.tarraform.backend.region // .aws.region' config.yaml)" >> $GITHUB_OUTPUT
             # Flags de execução
           echo "tf_auto_approve=$(yq '.tarraform.auto_approve' config.yaml)" >> $GITHUB_OUTPUT
           echo "tf_destroy=$(yq '.tarraform.destroy' config.yaml)" >> $GITHUB_OUTPUT
@@ -67,6 +68,7 @@ jobs:
           terraform init \
             -backend-config="bucket=${{ needs.setup.outputs.s3_bucket }}" \
             -backend-config="key=${{ needs.setup.outputs.s3_key }}" \
+            -backend-config="region=${{ needs.setup.outputs.backend_region }}"
 
       - name: Terraform Plan
         run: |
@@ -108,6 +110,7 @@ jobs:
           terraform init \
             -backend-config="bucket=${{ needs.setup.outputs.s3_bucket }}" \
             -backend-config="key=${{ needs.setup.outputs.s3_key }}" \
+            -backend-config="region=${{ needs.setup.outputs.backend_region }}"
 
       - name: Terraform Plan (Destroy)
         run: |
