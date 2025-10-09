@@ -10,6 +10,8 @@ resource "aws_lambda_function" "lambda_trigger" {
   environment {
     variables = {
       ENV = var.environment
+      DATABASE_OUTPUT = aws_glue_catalog_database.main.name
+      TABLE_OUTPUT = aws_glue_catalog_table.spec_table.name
     }
   }
 
