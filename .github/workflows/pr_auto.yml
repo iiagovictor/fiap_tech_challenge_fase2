@@ -1,4 +1,4 @@
-name: '1 - [START] Validate and Create PR to Main'
+name: '1 - [FEAT] Validate and Create PR to Main'
 
 on:
   push:
