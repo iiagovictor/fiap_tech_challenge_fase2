@@ -1,6 +1,19 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+"""
+Glue ETL – B3 Batch (All Days) com agregações numéricas
+- Varre um arquivo específico OU todos os dias de um prefixo (LOCATION_PATH).
+- Normaliza e escreve em refined/ano=YYYY/mes=MM/dia=DD/ticker=XXX/part-*.parquet (sem dataset).
+- Registra as partições no Glue Catalog via boto3.
+- Atualiza o schema (Columns) da tabela no final, a partir de um parquet real de refined.
+- Requisitos do item 5 atendidos:
+    * Renomear 2 colunas: longName->NomeCompleto, sector->Setor
+    * Agregações numéricas (ex.: soma de Volume por dia e por setor; média de preço por setor no dia)
+    * Cálculo de média móvel de 7 dias por ticker (MM7) usando regularMarketPrice
+    * Métrica simples: Delta_Valor = dayHigh - dayLow
+"""
+
 import sys
 from io import BytesIO
 import re
@@ -10,6 +23,7 @@ from typing import Dict, Any, List, Tuple
 
 import boto3
 import pandas as pd
+import numpy as np
 import awswrangler as wr
 
 # -----------------------------------------------------------------------------
@@ -27,7 +41,7 @@ except Exception:
         return vars(ns)
 
 # -----------------------------------------------------------------------------
-# Helpers de Glue Catalog
+# Constantes de partição
 # -----------------------------------------------------------------------------
 EXPECTED_PARTITION_KEYS = [
     {"Name": "ano", "Type": "int"},
@@ -37,6 +51,9 @@ EXPECTED_PARTITION_KEYS = [
 ]
 EXPECTED_PK_NAMES = [k["Name"] for k in EXPECTED_PARTITION_KEYS]
 
+# -----------------------------------------------------------------------------
+# Helpers de Glue Catalog
+# -----------------------------------------------------------------------------
 def ensure_database(db_name: str):
     glue_client = boto3.client("glue")
     try:
@@ -219,6 +236,67 @@ def discover_finance_keys(s3_client, bucket: str, object_key: str) -> List[str]:
 
     return sorted(keys, key=key_sort)
 
+def extract_ymd_from_key(key: str) -> Tuple[int,int,int]:
+    m = re.search(r"ano=(\d{4})/mes=(\d{1,2})/dia=(\d{1,2})", key)
+    return tuple(map(int, m.groups())) if m else None
+
+# -----------------------------------------------------------------------------
+# MM7 – Calcula média móvel 7 dias por ticker usando todos os arquivos listados
+# -----------------------------------------------------------------------------
+def build_mm7_from_keys(s3_client, bucket_name: str, finance_keys: List[str]) -> pd.DataFrame:
+    """
+    Retorna um DataFrame (ticker, ano, mes, dia, MM7) com a média móvel de 7 dias
+    calculada sobre 'regularMarketPrice' para todos os arquivos informados.
+    """
+    rows = []
+    # lê somente colunas necessárias para ser leve
+    for k in finance_keys:
+        ymd = extract_ymd_from_key(k)
+        if not ymd:
+            continue
+        try:
+            body = s3_client.get_object(Bucket=bucket_name, Key=k)["Body"].read()
+            dfh = pd.read_parquet(BytesIO(body), columns=["ticker","regularMarketPrice"])
+        except Exception:
+            continue
+        dfh["ano"], dfh["mes"], dfh["dia"] = ymd
+        rows.append(dfh)
+
+    if not rows:
+        return pd.DataFrame(columns=["ticker","ano","mes","dia","MM7"])
+
+    df_mm = pd.concat(rows, ignore_index=True)
+    # normaliza
+    df_mm["regularMarketPrice"] = pd.to_numeric(df_mm["regularMarketPrice"], errors="coerce")
+    df_mm["ticker"] = (
+        df_mm["ticker"].astype(str).str.strip().str.upper()
+            .replace({"": pd.NA, "NAN": pd.NA})
+            .str.replace(r"[/=\\]", "-", regex=True)
+            .str.replace(r"[^A-Z0-9._-]", "_", regex=True)
+    )
+    df_mm = df_mm.dropna(subset=["ticker","regularMarketPrice"]).copy()
+
+    # cria data e ordena
+    df_mm["data"] = pd.to_datetime(
+        df_mm[["ano","mes","dia"]].astype(str).agg("-".join, axis=1),
+        format="%Y-%m-%d", errors="coerce"
+    )
+    df_mm = df_mm.dropna(subset=["data"]).sort_values(["ticker","data"])
+
+    # MM7 por ticker
+    df_mm["MM7"] = (
+        df_mm.groupby("ticker")["regularMarketPrice"]
+             .transform(lambda s: s.rolling(window=7, min_periods=1).mean())
+    )
+
+    # reduz para uma linha por (ticker, data)
+    df_mm_day = (
+        df_mm[["ticker","ano","mes","dia","MM7"]]
+        .dropna(subset=["MM7"])
+        .drop_duplicates(subset=["ticker","ano","mes","dia"], keep="last")
+    )
+    return df_mm_day
+
 # -----------------------------------------------------------------------------
 # Main
 # -----------------------------------------------------------------------------
@@ -261,10 +339,13 @@ def main():
     first_body = s3_client.get_object(Bucket=bucket_name, Key=first_key)["Body"].read()
     df_first = pd.read_parquet(BytesIO(first_body))
 
-    # Garante que 'ticker' exista no primeiro df (se faltar, cria vazia p/ schema)
+    # Renomes obrigatórios (se existirem)
+    if "longName" in df_first.columns: df_first.rename(columns={'longName': 'NomeCompleto'}, inplace=True)
+    if "sector"   in df_first.columns: df_first.rename(columns={'sector': 'Setor'}, inplace=True)
+
+    # Garante colunas pois compõem a tabela/partição
     if "ticker" not in df_first.columns:
         df_first["ticker"] = pd.Series(dtype="string")
-    # Garante cols de partição no schema (mesmo que vazias)
     for c in ("ano", "mes", "dia"):
         if c not in df_first.columns:
             df_first[c] = pd.Series(dtype="Int64")
@@ -272,13 +353,15 @@ def main():
     ensure_table_4p_from_df(refined_db, refined_table, refined_path, df_first)
 
     glue = boto3.client("glue")
-    # Usa helper robusto para garantir PartitionKeys corretas (evita KeyError)
     table_keys = get_or_fix_partition_keys(glue, refined_db, refined_table, refined_path, df_first)
     catalog_loc = glue.get_table(DatabaseName=refined_db, Name=refined_table)["Table"]["StorageDescriptor"]["Location"].rstrip("/")
     assert refined_path.rstrip("/") == catalog_loc, f"Path divergente: {refined_path} != {catalog_loc}"
     print(f"[CHECK] PartitionKeys no Glue = {table_keys}")
 
-    # Processo: para cada arquivo do dia
+    # -------------------- MM7 (histórico) --------------------
+    df_mm_day = build_mm7_from_keys(s3_client, bucket_name, finance_keys)
+
+    # -------------------- Processamento dia a dia --------------------
     particoes_escritas: List[Dict[str, Any]] = []
 
     for finance_key in finance_keys:
@@ -292,18 +375,20 @@ def main():
 
         df = pd.read_parquet(BytesIO(body))
 
-        # Renomeios e cálculos simples
+        # Renomeios obrigatórios (requisito)
         if "longName" in df.columns: df.rename(columns={'longName': 'NomeCompleto'}, inplace=True)
         if "sector"   in df.columns: df.rename(columns={'sector': 'Setor'}, inplace=True)
+
+        # Métrica simples: Delta_Valor
         if {"dayHigh","dayLow"} <= set(df.columns):
             df['Delta_Valor'] = (df['dayHigh'] - df['dayLow']).astype(float)
 
         # Extrai ano/mes/dia do caminho atual
-        m_atual = re.search(r"ano=(\d{4})/mes=(\d{1,2})/dia=(\d{1,2})", finance_key)
-        if not m_atual:
+        ymd = extract_ymd_from_key(finance_key)
+        if not ymd:
             print(f"[WARN] Não achou ano/mes/dia em {finance_key}, pulando...")
             continue
-        ano_out, mes_out, dia_out = map(int, m_atual.groups())
+        ano_out, mes_out, dia_out = ymd
         df["ano"] = ano_out; df["mes"] = mes_out; df["dia"] = dia_out
 
         # Sanitização das chaves de partição
@@ -323,6 +408,42 @@ def main():
         df["ano"] = df["ano"].astype(int)
         df["mes"] = df["mes"].astype(int)
         df["dia"] = df["dia"].astype(int)
+
+        # ---------------- Agregações numéricas que fazem sentido ----------------
+        # Se houver coluna 'volume', calculamos:
+        # 1) VolumeTotalDia: soma do volume no dia (todas as ações)
+        # 2) VolumeSetorDia: soma do volume por setor no dia
+        # 3) PrecoMedioSetorDia: média do regularMarketPrice por setor no dia
+        if "volume" in df.columns:
+            vol_total = (
+                df.groupby(["ano","mes","dia"], as_index=False)["volume"]
+                  .sum().rename(columns={"volume": "VolumeTotalDia"})
+            )
+            df = df.merge(vol_total, on=["ano","mes","dia"], how="left")
+
+        if {"Setor","volume"} <= set(df.columns):
+            vol_setor = (
+                df.groupby(["ano","mes","dia","Setor"], as_index=False)["volume"]
+                  .sum().rename(columns={"volume": "VolumeSetorDia"})
+            )
+            df = df.merge(vol_setor, on=["ano","mes","dia","Setor"], how="left")
+
+        if {"Setor","regularMarketPrice"} <= set(df.columns):
+            preco_setor = (
+                df.groupby(["ano","mes","dia","Setor"], as_index=False)["regularMarketPrice"]
+                  .mean().rename(columns={"regularMarketPrice": "PrecoMedioSetorDia"})
+            )
+            df = df.merge(preco_setor, on=["ano","mes","dia","Setor"], how="left")
+
+        # Merge da MM7 (se disponível) – requisito
+        if not df_mm_day.empty and "ticker" in df.columns:
+            df = df.merge(
+                df_mm_day,
+                on=["ticker","ano","mes","dia"],
+                how="left"
+            )
+            # Caso prefira outro nome:
+            # df.rename(columns={"MM7": "Media_Movel_7d"}, inplace=True)
 
         # Escreve por partição (ticker) - sem dataset
         cols_part = ["ano","mes","dia","ticker"]
@@ -348,15 +469,15 @@ def main():
     print(f"[INFO] Partições únicas a registrar: {len(particoes_escritas)}")
 
     # Registro no catálogo via boto3
+    glue = boto3.client("glue")
     tinfo = glue.get_table(DatabaseName=refined_db, Name=refined_table)["Table"]
     base_sd = tinfo["StorageDescriptor"]
-    table_keys = [k["Name"] for k in tinfo.get("PartitionKeys", EXPECTED_PARTITION_KEYS)]
 
     def _to_str(v):
         return str(int(v)) if isinstance(v, (int, float)) and not isinstance(v, bool) else str(v)
 
     def make_partition_input(p):
-        values_in_order = [_to_str(p[k]) for k in [k["Name"] for k in EXPECTED_PARTITION_KEYS]]
+        values_in_order = [_to_str(p[k]) for k in EXPECTED_PK_NAMES]
         part_location = (
             f"{refined_path.rstrip('/')}/"
             f"ano={int(p['ano']):04d}/mes={int(p['mes']):02d}/dia={int(p['dia']):02d}/ticker={p['ticker']}/"
@@ -408,6 +529,7 @@ def main():
 
     print("[DONE] Job finalizado com sucesso.")
 
+# -----------------------------------------------------------------------------
 if __name__ == "__main__":
     try:
         main()
