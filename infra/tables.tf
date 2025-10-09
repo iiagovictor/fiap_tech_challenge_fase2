@@ -28,94 +28,63 @@ resource "aws_glue_catalog_table" "spec_table" {
     columns {
       name = "longName"
       type = "string"
-      comment = <<-EOT
-        O nome completo da companhia ou fundo de investimento
-        proprietário do ativo. Ex: Petróleo Brasileiro S.A. - Petrobras,
-        Vale S.A.
-      EOT
+      comment = "O nome completo da companhia ou fundo de investimento proprietário do ativo. Ex: Petróleo Brasileiro S.A. - Petrobras, Vale S.A."
     }
     
     # NOVA COLUNA 2: Setor de Atuação
     columns {
       name = "sector"
       type = "string"
-      comment = <<-EOT
-        O segmento da economia em que a empresa opera. Ajuda a
-        categorizar e comparar empresas. Ex: Energia Elétrica,
-        Bancos, Mineração, Tecnologia.
-      EOT
+      comment = "O segmento da economia em que a empresa opera. Ajuda a categorizar e comparar empresas. Ex: Energia Elétrica, Bancos, Mineração, Tecnologia."
     }
 
     # NOVA COLUNA 3: Capitalização de Mercado
     columns {
       name = "marketCap"
       type = "bigint"
-      comment = <<-EOT
-        O valor total de mercado da empresa. É calculado multiplicando o
-        regularMarketPrice (preço atual) pelo número total de ações
-        em circulação.
-      EOT
+      comment = "O valor total de mercado da empresa. É calculado multiplicando o regularMarketPrice (preço atual) pelo número total de ações em circulação."
     }
 
     # NOVA COLUNA 4: Volume de Negociação
     columns {
       name = "volume"
       type = "bigint"
-      comment = <<-EOT
-        O número total de ações ou contratos do ativo que foram
-        negociados (comprados e vendidos) durante um determinado
-        período (geralmente o dia atual). É uma medida da liquidez do ativo.
-      EOT
+      comment = "O número total de ações ou contratos do ativo que foram negociados (comprados e vendidos) durante um determinado período (geralmente o dia atual). É uma medida da liquidez do ativo."
     }
     
     # NOVA COLUNA 5: Tipo de Cotação
     columns {
       name = "quoteType"
       type = "string"
-      comment = <<-EOT
-        Define a natureza do ativo. Pode indicar se é uma Ação
-        (Equity), um Índice (Index), um Fundo Imobiliário (FII), etc.
-      EOT
+      comment = "Define a natureza do ativo. Pode indicar se é uma Ação (Equity), um Índice (Index), um Fundo Imobiliário (FII), etc." 
     }
 
     # NOVA COLUNA 6: Preço de Mercado Atual
     columns {
       name = "regularMarketPrice"
       type = "decimal(18, 4)"
-      comment = <<-EOT
-        O último preço pelo qual o ativo foi negociado.
-        É o preço de referência atual.
-      EOT
+      comment = "O último preço pelo qual o ativo foi negociado. É o preço de referência atual."
     }
 
     # NOVA COLUNA 7: Preço de Abertura
     columns {
       name = "open"
       type = "decimal(18, 4)"
-      comment = <<-EOT
-        O preço pelo qual a primeira negociação do ativo
-        ocorreu no início do dia de negociação.
-      EOT
+      comment = "O preço pelo qual a primeira negociação do ativo ocorreu no início do dia de negociação."
     }
 
     # NOVA COLUNA 8: Mínima do Dia
     columns {
       name = "dayLow"
       type = "decimal(18, 4)"
-      comment = <<-EOT
-        O preço mais baixo que o ativo atingiu em qualquer
-        momento durante o dia de negociação.
-      EOT
+      comment = "O preço mais baixo que o ativo atingiu em qualquer momento durante o dia de negociação."
     }
 
     # NOVA COLUNA 9: Máxima do Dia
     columns {
       name = "dayHigh"
       type = "decimal(18, 4)"
-      comment = <<-EOT
-        O preço mais alto que o ativo atingiu em qualquer
-        momento durante o dia de negociação.
-      EOT
+      comment = "O preço mais alto que o ativo atingiu em qualquer momento durante o dia de negociação."
     }
   }
 
