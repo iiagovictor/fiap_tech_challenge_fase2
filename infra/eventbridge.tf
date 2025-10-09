@@ -18,7 +18,9 @@ resource "aws_cloudwatch_event_target" "trigger_data_extraction_target" {
     {
     "Arguments": {
         "--ENV": "${var.environment}",
-        "--DT_REF": "<time>"
+        "--DT_REF": "<time>",
+        "--BUCKET_TARGET": "${aws_s3_bucket.raw.bucket}",
+        "--BASE_DIR": "yfinance/data"
     }
     }
     EOF
