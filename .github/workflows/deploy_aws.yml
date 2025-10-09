@@ -17,9 +17,21 @@ jobs:
       backend_region: ${{ steps.vars.outputs.backend_region }}
       tf_auto_approve: ${{ steps.vars.outputs.tf_auto_approve }}
       tf_destroy: ${{ steps.vars.outputs.tf_destroy }}
+      has_lambda: ${{ steps.check_lambda.outputs.exists }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Check if lambda.tf exists
+        id: check_lambda
+        run: |
+          if [ -f "infra/lambda.tf" ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "✅ lambda.tf found - Lambda build will be executed"
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "ℹ️  lambda.tf not found - Lambda build will be skipped"
+          fi
 
       - name: Install yq and read config.yaml variables
         id: vars
@@ -27,14 +39,11 @@ jobs:
           sudo wget https://github.com/mikefarah/yq/releases/download/v4.43.1/yq_linux_amd64 -O /usr/bin/yq
           sudo chmod +x /usr/bin/yq
           echo "python_version=$(yq '.setup.python_version // "3.11"' config.yaml)" >> $GITHUB_OUTPUT
-          # Região principal
           echo "aws_region=$(yq '.aws.region' config.yaml)" >> $GITHUB_OUTPUT
-          # Backend
           echo "aws_account_id=$(yq '.terraform.backend.account_id' config.yaml)" >> $GITHUB_OUTPUT
           echo "s3_bucket=$(yq '.terraform.backend.s3_bucket' config.yaml)" >> $GITHUB_OUTPUT
           echo "s3_key=$(yq '.terraform.backend.key' config.yaml)" >> $GITHUB_OUTPUT
           echo "backend_region=$(yq '.terraform.backend.region // .aws.region' config.yaml)" >> $GITHUB_OUTPUT
-          # Flags de execução
           echo "tf_auto_approve=$(yq '.terraform.auto_approve' config.yaml)" >> $GITHUB_OUTPUT
           echo "tf_destroy=$(yq '.terraform.destroy' config.yaml)" >> $GITHUB_OUTPUT
 
@@ -42,7 +51,6 @@ jobs:
         run: |
           EXIT_CODE=0
           
-          # Validação das variáveis de setup
           if [ -z "${{ steps.vars.outputs.python_version }}" ]; then
             echo "❌ Error: python_version is required"
             EXIT_CODE=1
@@ -50,7 +58,6 @@ jobs:
             echo "✅ python_version: ${{ steps.vars.outputs.python_version }}"
           fi
           
-          # Validação das variáveis AWS
           if [ -z "${{ steps.vars.outputs.aws_region }}" ]; then
             echo "❌ Error: aws_region is required"
             EXIT_CODE=1
@@ -58,7 +65,6 @@ jobs:
             echo "✅ aws_region: ${{ steps.vars.outputs.aws_region }}"
           fi
           
-          # Validação do backend Terraform
           if [ -z "${{ steps.vars.outputs.aws_account_id }}" ]; then
             echo "❌ Error: terraform.backend.account_id is required"
             EXIT_CODE=1
@@ -87,7 +93,6 @@ jobs:
             echo "✅ backend_region: ${{ steps.vars.outputs.backend_region }}"
           fi
           
-          # Validação das flags de execução
           if [ -z "${{ steps.vars.outputs.tf_auto_approve }}" ]; then
             echo "⚠️  Warning: terraform.auto_approve not set, defaulting to false"
             echo "tf_auto_approve=false" >> $GITHUB_OUTPUT
@@ -111,9 +116,182 @@ jobs:
           echo ""
           echo "✅ All required variables validated successfully!"
 
-  terraform_apply:
+  build_lambda:
     needs: setup
-    if: ${{ needs.setup.outputs.tf_destroy != 'true' }}
+    if: ${{ needs.setup.outputs.has_lambda == 'true' && needs.setup.outputs.tf_destroy != 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ needs.setup.outputs.python_version }}
+
+      - name: Validate Lambda structure
+        run: |
+          # ...existing validation code...
+
+      - name: Install Lambda dependencies
+        run: |
+          cd app/lambda
+          
+          echo "🔧 Installing Lambda dependencies..."
+          
+          # Remove instalações anteriores
+          find . -type d -name "*.dist-info" -exec rm -rf {} + 2>/dev/null || true
+          find . -type d -name "*.egg-info" -exec rm -rf {} + 2>/dev/null || true
+          find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+          
+          # Instala dependências
+          pip install -r requirements.txt -t . --upgrade --no-cache-dir
+          
+          echo "✅ Lambda dependencies installed successfully!"
+
+      - name: Create Lambda deployment package
+        run: |
+          cd app/lambda
+          
+          echo "📦 Creating Lambda deployment package..."
+          
+          # Remove zip anterior se existir
+          rm -f main.zip
+          
+          # Cria o zip
+          zip -r main.zip . -x "*.pyc" "__pycache__/*" "*.dist-info/*" "*.egg-info/*"
+          
+          echo "✅ Lambda deployment package created: main.zip"
+          echo "📊 Package size: $(du -h main.zip | cut -f1)"
+
+      - name: Upload Lambda artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lambda-package
+          path: app/lambda/main.zip
+          retention-days: 1
+
+  terraform_apply:
+    needs: [setup, build_lambda]
+    if: ${{ always() && needs.setup.outputs.tf_destroy != 'true' && (needs.build_lambda.result == 'success' || needs.build_lambda.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    environment: prod
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ needs.setup.outputs.aws_region }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download Lambda artifact
+        if: ${{ needs.setup.outputs.has_lambda == 'true' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: lambda-package
+          path: app/lambda/
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ needs.setup.outputs.python_version }}
+
+    needs: setup
+    if: ${{ needs.setup.outputs.has_lambda == 'true' && needs.setup.outputs.tf_destroy != 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ needs.setup.outputs.python_version }}
+
+      - name: Validate Lambda structure
+        run: |
+          EXIT_CODE=0
+          
+          echo "🔍 Validating Lambda structure..."
+          
+          # Verifica se a pasta lambda existe
+          if [ ! -d "app/lambda" ]; then
+            echo "❌ Error: app/lambda directory not found"
+            EXIT_CODE=1
+          fi
+          
+          # Verifica se existe pelo menos um arquivo .py
+          if [ ! "$(find app/lambda -maxdepth 1 -name '*.py' -type f)" ]; then
+            echo "❌ Error: No Python files (.py) found in app/lambda/"
+            EXIT_CODE=1
+          else
+            echo "✅ Python files found:"
+            find app/lambda -maxdepth 1 -name '*.py' -type f -exec basename {} \;
+          fi
+          
+          # Verifica se requirements.txt existe
+          if [ ! -f "app/lambda/requirements.txt" ]; then
+            echo "❌ Error: requirements.txt not found in app/lambda/"
+            EXIT_CODE=1
+          else
+            echo "✅ requirements.txt found"
+            echo "📦 Dependencies to install:"
+            cat app/lambda/requirements.txt
+          fi
+          
+          if [ $EXIT_CODE -ne 0 ]; then
+            echo ""
+            echo "❌ Lambda validation failed! Please ensure:"
+            echo "   1. app/lambda/ directory exists"
+            echo "   2. At least one .py file exists in app/lambda/"
+            echo "   3. requirements.txt exists in app/lambda/"
+            exit 1
+          fi
+          
+          echo ""
+          echo "✅ Lambda structure validated successfully!"
+
+      - name: Install Lambda dependencies
+        run: |
+          cd app/lambda
+          
+          echo "🔧 Installing Lambda dependencies..."
+          
+          # Remove instalações anteriores
+          find . -type d -name "*.dist-info" -exec rm -rf {} + 2>/dev/null || true
+          find . -type d -name "*.egg-info" -exec rm -rf {} + 2>/dev/null || true
+          find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+          
+          # Instala dependências
+          pip install -r requirements.txt -t . --upgrade --no-cache-dir
+          
+          echo "✅ Lambda dependencies installed successfully!"
+          
+          echo ""
+          echo "📦 Installed packages:"
+          ls -1 | grep -v "\.py$\|requirements\.txt\|\.zip$" | head -10
+
+      - name: Create Lambda deployment package
+        run: |
+          cd app/lambda
+          
+          echo "📦 Creating Lambda deployment package..."
+          
+          # Remove zip anterior se existir
+          rm -f main.zip
+          
+          # Cria o zip
+          zip -r main.zip . -x "*.pyc" "__pycache__/*" "*.dist-info/*" "*.egg-info/*"
+          
+          echo "✅ Lambda deployment package created: main.zip"
+          echo "📊 Package size: $(du -h main.zip | cut -f1)"
+
+  terraform_apply:
+    needs: [setup, build_lambda]
+    if: ${{ always() && needs.setup.outputs.tf_destroy != 'true' && (needs.build_lambda.result == 'success' || needs.build_lambda.result == 'skipped') }}
     runs-on: ubuntu-latest
     environment: prod
     steps:
