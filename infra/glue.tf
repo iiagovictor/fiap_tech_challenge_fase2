@@ -11,6 +11,9 @@ resource "aws_glue_job" "data_extraction" {
   max_capacity      = var.glue_max_capacity
   timeout           = var.glue_timeout
   glue_version      = var.glue_version
+  default_arguments = {
+    "--additional-python-modules" = "yfinance==0.2.66"
+  }
   tags              = local.glue_tags
 
   depends_on = [ 
