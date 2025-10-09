@@ -102,7 +102,7 @@ terraform:
 #### Parâmetros Principais
 
 - **destroy**: Define se o comando `terraform destroy` será executado automaticamente
-  - `false`: Apenas provisiona recursos (padrão para ambientes produtivos)
+  - `false`: Apenas provisiona recursos (padrão)
   - `true`: Destrói todos os recursos criados
 
 #### Backend Configuration
