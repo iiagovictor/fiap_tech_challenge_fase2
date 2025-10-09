@@ -131,7 +131,43 @@ jobs:
 
       - name: Validate Lambda structure
         run: |
-          # ...existing validation code...
+          EXIT_CODE=0
+          
+          echo "🔍 Validating Lambda structure..."
+          
+          if [ ! -d "app/lambda" ]; then
+            echo "❌ Error: app/lambda directory not found"
+            EXIT_CODE=1
+          fi
+          
+          if [ ! "$(find app/lambda -maxdepth 1 -name '*.py' -type f)" ]; then
+            echo "❌ Error: No Python files (.py) found in app/lambda/"
+            EXIT_CODE=1
+          else
+            echo "✅ Python files found:"
+            find app/lambda -maxdepth 1 -name '*.py' -type f -exec basename {} \;
+          fi
+          
+          if [ ! -f "app/lambda/requirements.txt" ]; then
+            echo "❌ Error: requirements.txt not found in app/lambda/"
+            EXIT_CODE=1
+          else
+            echo "✅ requirements.txt found"
+            echo "📦 Dependencies to install:"
+            cat app/lambda/requirements.txt
+          fi
+          
+          if [ $EXIT_CODE -ne 0 ]; then
+            echo ""
+            echo "❌ Lambda validation failed! Please ensure:"
+            echo "   1. app/lambda/ directory exists"
+            echo "   2. At least one .py file exists in app/lambda/"
+            echo "   3. requirements.txt exists in app/lambda/"
+            exit 1
+          fi
+          
+          echo ""
+          echo "✅ Lambda structure validated successfully!"
 
       - name: Install Lambda dependencies
         run: |
@@ -139,15 +175,16 @@ jobs:
           
           echo "🔧 Installing Lambda dependencies..."
           
-          # Remove instalações anteriores
           find . -type d -name "*.dist-info" -exec rm -rf {} + 2>/dev/null || true
           find . -type d -name "*.egg-info" -exec rm -rf {} + 2>/dev/null || true
           find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
           
-          # Instala dependências
           pip install -r requirements.txt -t . --upgrade --no-cache-dir
           
           echo "✅ Lambda dependencies installed successfully!"
+          echo ""
+          echo "📦 Installed packages:"
+          ls -1 | grep -v "\.py$\|requirements\.txt\|\.zip$" | head -10
 
       - name: Create Lambda deployment package
         run: |
@@ -155,10 +192,8 @@ jobs:
           
           echo "📦 Creating Lambda deployment package..."
           
-          # Remove zip anterior se existir
           rm -f main.zip
           
-          # Cria o zip
           zip -r main.zip . -x "*.pyc" "__pycache__/*" "*.dist-info/*" "*.egg-info/*"
           
           echo "✅ Lambda deployment package created: main.zip"
@@ -193,117 +228,6 @@ jobs:
         with:
           name: lambda-package
           path: app/lambda/
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ needs.setup.outputs.python_version }}
-
-    needs: setup
-    if: ${{ needs.setup.outputs.has_lambda == 'true' && needs.setup.outputs.tf_destroy != 'true' }}
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ needs.setup.outputs.python_version }}
-
-      - name: Validate Lambda structure
-        run: |
-          EXIT_CODE=0
-          
-          echo "🔍 Validating Lambda structure..."
-          
-          # Verifica se a pasta lambda existe
-          if [ ! -d "app/lambda" ]; then
-            echo "❌ Error: app/lambda directory not found"
-            EXIT_CODE=1
-          fi
-          
-          # Verifica se existe pelo menos um arquivo .py
-          if [ ! "$(find app/lambda -maxdepth 1 -name '*.py' -type f)" ]; then
-            echo "❌ Error: No Python files (.py) found in app/lambda/"
-            EXIT_CODE=1
-          else
-            echo "✅ Python files found:"
-            find app/lambda -maxdepth 1 -name '*.py' -type f -exec basename {} \;
-          fi
-          
-          # Verifica se requirements.txt existe
-          if [ ! -f "app/lambda/requirements.txt" ]; then
-            echo "❌ Error: requirements.txt not found in app/lambda/"
-            EXIT_CODE=1
-          else
-            echo "✅ requirements.txt found"
-            echo "📦 Dependencies to install:"
-            cat app/lambda/requirements.txt
-          fi
-          
-          if [ $EXIT_CODE -ne 0 ]; then
-            echo ""
-            echo "❌ Lambda validation failed! Please ensure:"
-            echo "   1. app/lambda/ directory exists"
-            echo "   2. At least one .py file exists in app/lambda/"
-            echo "   3. requirements.txt exists in app/lambda/"
-            exit 1
-          fi
-          
-          echo ""
-          echo "✅ Lambda structure validated successfully!"
-
-      - name: Install Lambda dependencies
-        run: |
-          cd app/lambda
-          
-          echo "🔧 Installing Lambda dependencies..."
-          
-          # Remove instalações anteriores
-          find . -type d -name "*.dist-info" -exec rm -rf {} + 2>/dev/null || true
-          find . -type d -name "*.egg-info" -exec rm -rf {} + 2>/dev/null || true
-          find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
-          
-          # Instala dependências
-          pip install -r requirements.txt -t . --upgrade --no-cache-dir
-          
-          echo "✅ Lambda dependencies installed successfully!"
-          
-          echo ""
-          echo "📦 Installed packages:"
-          ls -1 | grep -v "\.py$\|requirements\.txt\|\.zip$" | head -10
-
-      - name: Create Lambda deployment package
-        run: |
-          cd app/lambda
-          
-          echo "📦 Creating Lambda deployment package..."
-          
-          # Remove zip anterior se existir
-          rm -f main.zip
-          
-          # Cria o zip
-          zip -r main.zip . -x "*.pyc" "__pycache__/*" "*.dist-info/*" "*.egg-info/*"
-          
-          echo "✅ Lambda deployment package created: main.zip"
-          echo "📊 Package size: $(du -h main.zip | cut -f1)"
-
-  terraform_apply:
-    needs: [setup, build_lambda]
-    if: ${{ always() && needs.setup.outputs.tf_destroy != 'true' && (needs.build_lambda.result == 'success' || needs.build_lambda.result == 'skipped') }}
-    runs-on: ubuntu-latest
-    environment: prod
-    steps:
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-region: ${{ needs.setup.outputs.aws_region }}
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-
-      - name: Checkout repository
-        uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v5
