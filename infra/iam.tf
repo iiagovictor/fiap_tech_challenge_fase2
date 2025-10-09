@@ -25,3 +25,17 @@ resource "aws_iam_role" "glue_role" {
   description = "Role para execução dos Glue Jobs do projeto ${var.project_name}"
   assume_role_policy = file("${path.module}/iam/trust/trust_glue.json")
 }
+
+# EventBridge IAM Role and Policy
+
+resource "aws_iam_role_policy" "eventbridge_policy" {
+  name   = "${var.project_name}_eventbridge_policy_${var.environment}"
+  role   = aws_iam_role.eventbridge_role.id
+  policy = file("${path.module}/iam/policies/policy_eventbridge.json")
+}
+
+resource "aws_iam_role" "eventbridge_role" {
+  name = "${var.project_name}_eventbridge_role_${var.environment}"
+  description = "Role para EventBridge do projeto ${var.project_name}"
+  assume_role_policy = file("${path.module}/iam/trust/trust_eventbridge.json")
+}
