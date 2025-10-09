@@ -39,3 +39,17 @@ resource "aws_iam_role" "eventbridge_role" {
   description = "Role para EventBridge do projeto ${var.project_name}"
   assume_role_policy = file("${path.module}/iam/trust/trust_eventbridge.json")
 }
+
+## Step Functions IAM Role and Policy
+
+resource "aws_iam_role_policy" "sfn_policy" {
+  name   = "${var.project_name}_sfn_policy_${var.environment}"
+  role   = aws_iam_role.sfn_role.id
+  policy = file("${path.module}/iam/policies/policy_sfn.json")
+}
+
+resource "aws_iam_role" "sfn_role" {
+  name = "${var.project_name}_sfn_role_${var.environment}"
+  description = "Role para Step Functions do projeto ${var.project_name}"
+  assume_role_policy = file("${path.module}/iam/trust/trust_sfn.json")
+}
