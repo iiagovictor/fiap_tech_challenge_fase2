@@ -1,0 +1,12 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "glue:StartJobRun"
+      ],
+      "Resource": "arn:aws:glue:*:*:job/techchallenge2_data_ingestion_job_prod"
+    }
+  ]
+}

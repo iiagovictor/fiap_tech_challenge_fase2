@@ -3,10 +3,10 @@
   "Statement": [
     {
       "Effect": "Allow",
-      "Action": [
-        "glue:StartJobRun"
-      ],
-      "Resource": "arn:aws:glue:*:*:job/techchallenge2_data_ingestion_job_prod"
+      "Principal": {
+        "Service": "events.amazonaws.com"
+      },
+      "Action": "sts:AssumeRole"
     }
   ]
 }
