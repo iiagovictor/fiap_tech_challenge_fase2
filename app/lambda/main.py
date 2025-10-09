@@ -1,7 +1,14 @@
 import json
 import boto3
+import os
+
+
+DATABASE_OUTPUT = os.getenv('DATABASE_OUTPUT')
+TABLE_OUTPUT = os.getenv('TABLE_OUTPUT')
+ENV = os.getenv('ENV')
 
 glue_client = boto3.client('glue')
+
 
 def lambda_handler(event, context):
     try:
@@ -25,7 +32,10 @@ def lambda_handler(event, context):
                 '--DT_REF': 'AUTO',
                 '--BUCKET_TARGET': bucket_target,
                 '--KEY': key,
-                '--URI_OBJECT': object_uri
+                '--URI_OBJECT': object_uri,
+                '--ENV': ENV,
+                '--OUTPUT_DATABASE': DATABASE_OUTPUT,
+                '--OUTPUT_TABLE': TABLE_OUTPUT
             })
         
         print(f"Glue job iniciado: {response['JobRunId']}")
