@@ -17,7 +17,7 @@ variable "environment" {
 ## Table Variables
 
 variable "spec_table_name" {
-  description = "Name of the raw data table"
+  description = "Name of the spec data table"
   type        = string
   default     = "tb_techchallenge2_spec_data"
 }
