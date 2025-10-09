@@ -4,9 +4,9 @@
     {
       "Effect": "Allow",
       "Action": [
-        "glue:StartJobRun"
+        "states:StartExecution"
       ],
-      "Resource": "arn:aws:glue:*:*:job/techchallenge2_data_ingestion_job_prod"
+      "Resource": "arn:aws:states:*:*:stateMachine:techchallenge2_data_extraction_pipeline_prod"
     }
   ]
 }

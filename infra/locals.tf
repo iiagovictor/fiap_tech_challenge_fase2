@@ -11,4 +11,8 @@ locals {
     projeto        = "techchallenge2"
     finopsCategory = "compute"
   }
+  sfn_tags = {
+    projeto        = "techchallenge2"
+    finopsCategory = "orchestration"
+  }
 }
