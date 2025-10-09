@@ -4,7 +4,7 @@ resource "aws_lambda_function" "lambda_trigger" {
   handler          = "main.lambda_handler"
   runtime          = "python3.9"
   filename         = "${path.module}/../app/lambda/main.zip"
-  source_code_hash = filebase64sha256("${path.module}/../app/lambda/main.zip")
+  source_code_hash = fileexists("${path.module}/../app/lambda/main.zip") ? filebase64sha256("${path.module}/../app/lambda/main.zip") : null
   timeout          = 30
 
   environment {
