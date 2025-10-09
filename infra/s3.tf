@@ -21,7 +21,7 @@ resource "aws_s3_object" "app_files" {
   }
   
   bucket = aws_s3_bucket.artifacts.id
-  key    = "${var.project_name}/${each.value}"
+  key    = "${var.project_name}/app/${each.value}"
   source = "${path.module}/../app/${each.value}"
   etag   = filemd5("${path.module}/../app/${each.value}")
   

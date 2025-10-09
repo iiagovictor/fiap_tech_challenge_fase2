@@ -22,6 +22,14 @@ variable "raw_table_name" {
   default     = "tb_techchallenge2_raw_data"
 }
 
+## Cron Expression Variable
+
+variable "cron_expression" {
+  description = "Cron expression for scheduling the Glue Job Data Extraction"
+  type        = string
+  default     = "0 12 * * ? *"
+}
+
 ## Variables for Glue Jobs
 
 variable "glue_max_capacity" {
