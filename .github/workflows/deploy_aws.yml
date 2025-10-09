@@ -1,4 +1,4 @@
-name: '[PROD] Deploy Infra AWS'
+name: '2 - [PROD] Deploy Infra AWS'
 
 on:
   push:
