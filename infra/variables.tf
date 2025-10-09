@@ -16,10 +16,10 @@ variable "environment" {
 
 ## Table Variables
 
-variable "raw_table_name" {
+variable "spec_table_name" {
   description = "Name of the raw data table"
   type        = string
-  default     = "tb_techchallenge2_raw_data"
+  default     = "tb_techchallenge2_spec_data"
 }
 
 ## Cron Expression Variable
