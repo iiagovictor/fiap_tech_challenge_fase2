@@ -26,21 +26,21 @@ resource "aws_glue_catalog_table" "spec_table" {
 
     # NOVA COLUNA 1: Nome Completo da Empresa/Ativo
     columns {
-      name = "longName"
+      name = "nome_completo"
       type = "string"
       comment = "O nome completo da companhia ou fundo de investimento proprietário do ativo. Ex: Petróleo Brasileiro S.A. - Petrobras, Vale S.A."
     }
     
     # NOVA COLUNA 2: Setor de Atuação
     columns {
-      name = "sector"
+      name = "setor"
       type = "string"
       comment = "O segmento da economia em que a empresa opera. Ajuda a categorizar e comparar empresas. Ex: Energia Elétrica, Bancos, Mineração, Tecnologia."
     }
 
     # NOVA COLUNA 3: Capitalização de Mercado
     columns {
-      name = "marketCap"
+      name = "capitalizao_mercado"
       type = "bigint"
       comment = "O valor total de mercado da empresa. É calculado multiplicando o regularMarketPrice (preço atual) pelo número total de ações em circulação."
     }
@@ -54,35 +54,35 @@ resource "aws_glue_catalog_table" "spec_table" {
     
     # NOVA COLUNA 5: Tipo de Cotação
     columns {
-      name = "quoteType"
+      name = "tipo_acao"
       type = "string"
       comment = "Define a natureza do ativo. Pode indicar se é uma Ação (Equity), um Índice (Index), um Fundo Imobiliário (FII), etc." 
     }
 
     # NOVA COLUNA 6: Preço de Mercado Atual
     columns {
-      name = "regularMarketPrice"
+      name = "preco_mercado"
       type = "decimal(18, 4)"
       comment = "O último preço pelo qual o ativo foi negociado. É o preço de referência atual."
     }
 
     # NOVA COLUNA 7: Preço de Abertura
     columns {
-      name = "open"
+      name = "abertura"
       type = "decimal(18, 4)"
       comment = "O preço pelo qual a primeira negociação do ativo ocorreu no início do dia de negociação."
     }
 
     # NOVA COLUNA 8: Mínima do Dia
     columns {
-      name = "dayLow"
+      name = "minimo_dia"
       type = "decimal(18, 4)"
       comment = "O preço mais baixo que o ativo atingiu em qualquer momento durante o dia de negociação."
     }
 
     # NOVA COLUNA 9: Máxima do Dia
     columns {
-      name = "dayHigh"
+      name = "maximo_dia"
       type = "decimal(18, 4)"
       comment = "O preço mais alto que o ativo atingiu em qualquer momento durante o dia de negociação."
     }
