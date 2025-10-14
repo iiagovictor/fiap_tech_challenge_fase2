@@ -41,14 +41,14 @@ resource "aws_glue_catalog_table" "spec_table" {
     # NOVA COLUNA 3: Capitalização de Mercado
     columns {
       name = "capitalizao_mercado"
-      type = "bigint"
+      type = "double"
       comment = "O valor total de mercado da empresa. É calculado multiplicando o regularMarketPrice (preço atual) pelo número total de ações em circulação."
     }
 
     # NOVA COLUNA 4: Volume de Negociação
     columns {
       name = "volume"
-      type = "bigint"
+      type = "string"
       comment = "O número total de ações ou contratos do ativo que foram negociados (comprados e vendidos) durante um determinado período (geralmente o dia atual). É uma medida da liquidez do ativo."
     }
     
@@ -62,29 +62,43 @@ resource "aws_glue_catalog_table" "spec_table" {
     # NOVA COLUNA 6: Preço de Mercado Atual
     columns {
       name = "preco_mercado"
-      type = "decimal(18, 4)"
+      type = "double"
       comment = "O último preço pelo qual o ativo foi negociado. É o preço de referência atual."
     }
 
     # NOVA COLUNA 7: Preço de Abertura
     columns {
       name = "abertura"
-      type = "decimal(18, 4)"
+      type = "double"
       comment = "O preço pelo qual a primeira negociação do ativo ocorreu no início do dia de negociação."
     }
 
     # NOVA COLUNA 8: Mínima do Dia
     columns {
       name = "minimo_dia"
-      type = "decimal(18, 4)"
+      type = "double"
       comment = "O preço mais baixo que o ativo atingiu em qualquer momento durante o dia de negociação."
     }
 
     # NOVA COLUNA 9: Máxima do Dia
     columns {
       name = "maximo_dia"
-      type = "decimal(18, 4)"
+      type = "double"
       comment = "O preço mais alto que o ativo atingiu em qualquer momento durante o dia de negociação."
+    }
+
+    # NOVA COLUNA 10: Máxima do Dia
+    columns {
+      name = "delta_variacao_do_dia"
+      type = "double"
+      comment = "Variação do maior e menor valor da ação no dia"
+    }
+
+    # NOVA COLUNA 11: Máxima do Dia
+    columns {
+      name = "delta_variacao_dia_anterior"
+      type = "double"
+      comment = "Variação do preço da ação entre os dias"
     }
   }
 
