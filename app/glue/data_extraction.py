@@ -1,175 +1,185 @@
-import yfinance as yf
-import pandas as pd
-import concurrent.futures
-import json
-import time
-import os
-from datetime import datetime
-from typing import Dict, List, Optional, Tuple
+
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+# Standard library imports
 import sys
-from awsglue.utils import getResolvedOptions
-import boto3
+import logging
+import traceback
 from io import BytesIO
+from uuid import uuid4
+from typing import Dict, Any, List, Optional, Tuple
+from datetime import datetime, date
+import pyarrow as pa
+import pyarrow.dataset as ds
 
-s3_client = boto3.client('s3')
+# Configure logging
+logger = logging.getLogger(__name__)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
 
-class FinanceData:
-    def __init__(self):
-        self.tickers = ["ALOS3", "ABEV3", "ASAI3", "AURE3", "AZZA3", "B3SA3", "BBSE3", "BBDC3", "BBDC4", 
-                       "BRAP4", "BBAS3", "BRKM5", "BRAV3", "BPAC11", "CXSE3", "CEAB3", "CMIG4", "COGN3", 
-                       "CPLE6", "CSAN3", "CPFE3", "CMIN3", "CURY3", "CVCB3", "CYRE3", "DIRR3", "ELET3", 
-                       "ELET6", "EMBR3", "ENGI11", "ENEV3", "EGIE3", "EQTL3", "FLRY3", "GGBR4", "GOAU4", 
-                       "HAPV3", "HYPE3", "IGTI11", "IRBR3", "ISAE4", "ITSA4", "ITUB4", "KLBN11", "RENT3", 
-                       "LREN3", "MGLU3", "POMO4", "MBRF3", "BEEF3", "MOTV3", "MRVE3", "MULT3", "NATU3", 
-                       "PCAR3", "PETR3", "PETR4", "RECV3", "PRIO3", "PSSA3", "RADL3", "RAIZ4", "RDOR3", 
-                       "RAIL3", "SBSP3", "SANB11", "CSNA3", "SLCE3", "SMFT3", "SUZB3", "TAEE11", "VIVT3", 
-                       "TIMS3", "TOTS3", "UGPA3", "USIM5", "VALE3", "VAMO3", "VBBR3", "VIVA3", "WEGE3", "YDUQ3"]
-        self.sa_tickers = [f"{ticker}.SA" for ticker in self.tickers]
-        self.df_tickers = pd.DataFrame(self.sa_tickers, columns=["id_ticker"])
-        self.max_retries = 3
-        self.retry_delay = 1  # segundos
+# Third-party imports
+import boto3
+import pandas as pd
+import awswrangler as wr
 
-    def get_tickers_info(self) -> List[Dict]:
-        """Obtém informações de todos os tickers com tratamento de erros."""
-        print("Buscando dados dos tickers...")
-        start_time = time.time()
-        tickers_info = {}
-        
-        try:
-            # Divide os tickers em lotes para evitar sobrecarga
-            batch_size = 20
-            for i in range(0, len(self.df_tickers), batch_size):
-                batch_tickers = self.df_tickers["id_ticker"][i:i+batch_size]
-                
-                with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-                    future_to_ticker = {
-                        executor.submit(self.get_ticker_info, ticker): ticker 
-                        for ticker in batch_tickers
-                    }
-                    
-                    for future in concurrent.futures.as_completed(future_to_ticker):
-                        ticker_name, result = future.result()
-                        if result is not None:
-                            tickers_info[ticker_name] = result
-                
-                # Pequena pausa entre lotes para evitar rate limiting
-                time.sleep(0.5)
-            
-            if not tickers_info:
-                raise Exception("Nenhum dado foi obtido dos tickers")
-            
-            combined_data = pd.concat(tickers_info)
-            combined_data = combined_data.reset_index()
-            response = self.fetch_ticker_info(combined_data)
-            
-            print(f"Tempo total de execução: {time.time() - start_time:.2f} segundos")
-            return response
-            
-        except Exception as e:
-            print(f"Erro ao buscar informações dos tickers: {e}")
-            return []
-        
-    def get_ticker_info(self, ticker_name: str) -> Tuple[str, Optional[pd.DataFrame]]:
-        """Obtém informações de um ticker específico com retry."""
-        for attempt in range(self.max_retries):
-            try:
-                ticker = yf.Ticker(ticker_name)
-                temp = pd.DataFrame.from_dict(ticker.info, orient="index")
-                temp.reset_index(inplace=True)
-                temp.columns = ["attribute", "value"]
-                return ticker_name, temp
-            except Exception as e:
-                if attempt < self.max_retries - 1:
-                    print(f"Tentativa {attempt + 1} falhou para {ticker_name}: {e}")
-                    time.sleep(self.retry_delay * (attempt + 1))
-                else:
-                    print(f"Todas as tentativas falharam para {ticker_name}: {e}")
-        return ticker_name, None
-   
-    def fetch_ticker_info(self, combined_data: pd.DataFrame) -> List[Dict]:
-        """Processa e formata as informações dos tickers."""
-        result = []
-        try:
-            for ticker in combined_data['level_0'].unique():
-                ticker_id = ticker.replace('.SA', '')
-                ticker_data = combined_data[combined_data['level_0'] == ticker]
-                info = dict(zip(ticker_data['attribute'], ticker_data['value']))
-                
-                if ticker_id not in [r['ticker'] for r in result]:
-                    result.append({
-                        'ticker': ticker_id,
-                        'longName': info.get('longName'),
-                        'sector': info.get('sector'),
-                        'marketCap': info.get('marketCap'),
-                        'volume': info.get('volume'),
-                        'quoteType': info.get('quoteType'),
-                        'regularMarketPrice': info.get('regularMarketPrice'),
-                        'open': info.get('open'),
-                        'dayLow': info.get('dayLow'),
-                        'dayHigh': info.get('dayHigh')
-                    })
-        except Exception as e:
-            print(f"Erro ao processar dados dos tickers: {e}")
-            
-        return result
+# Global clients cache
+_BOTO3_CLIENTS = {}
 
-    def save_to_parquet(self, data: List[Dict], bucket_target: str, base_path: str) -> None:
-        """
-        Salva os dados em formato parquet usando uma estrutura de pastas por data.
-        
-        Args:
-            data: Lista de dicionários com os dados dos tickers
-            base_path: Caminho base onde será criada a estrutura de pastas
-        """
-        try:
-            # Converte a lista de dicionários para DataFrame
-            df = pd.DataFrame(data)
-            
-            # Obtém a data atual
-            current_date = datetime.now()
+try:
+    from awsglue.utils import getResolvedOptions
+except Exception:
+    import argparse
+    def getResolvedOptions(argv, options):
+        p = argparse.ArgumentParser()
+        for opt in options:
+            p.add_argument(f'--{opt}')
+        ns, _ = p.parse_known_args(argv[1:])
+        return vars(ns)
+# -----------------------------------------------------------------------------
+# Glue args compatibility (works locally and inside Glue)
+# -----------------------------------------------------------------------------
+def prepare_partition_columns(df: pd.DataFrame, year, month, day) -> pd.DataFrame:
+    df['dat_ano_rffc'] = year
+    df['dat_mes_rffc'] = month
+    df['dat_dia_rffc'] = day
+    df['ticker'] = df['ticker'].astype(str)
+    return df
+
+def save_df_to_s3_parquet(df, output_uri):
+    table = pa.Table.from_pandas(df, preserve_index=False)
+    ds.write_dataset(
+        data=table,
+        base_dir=output_uri,
+        format="parquet",
+        partitioning=['dat_ano_rffc', 'dat_mes_rffc', 'dat_dia_rffc', 'ticker'],   # ajuste suas colunas
+        existing_data_behavior="overwrite_or_ignore",  # sobrescreve por arquivo; não apaga pastas antigas
+    )
+
+def get_client(service_name: str):
+    """Get cached boto3 client or create new one"""
+    if service_name not in _BOTO3_CLIENTS:
+        _BOTO3_CLIENTS[service_name] = boto3.client(service_name)
+    return _BOTO3_CLIENTS[service_name]
+
+def get_last_partition(database: str, table: str) -> str:
+    client = boto3.client('glue')
+    paginator = client.get_paginator('get_partitions')
+    response_iterator = paginator.paginate(
+        DatabaseName=database,
+        TableName=table,
+        PaginationConfig={
+            'PageSize': 100
+        }
+    )
+
+    last_partition = None
+    last_location = None
+
+    for page in response_iterator:
+        partitions = page.get('Partitions', [])
+        for partition in partitions:
+            values = partition.get('Values', [])
+            if len(values) >= 3:
+                dat_ano_rffc, dat_mes_rffc, dat_dia_rffc = values[0], values[1], values[2]
+                if last_partition is None or (dat_ano_rffc, dat_mes_rffc, dat_dia_rffc) > last_partition:
+                    last_partition = (dat_ano_rffc, dat_mes_rffc, dat_dia_rffc)
+                    last_location = partition.get('StorageDescriptor', {}).get('Location', '')
+
+    if last_partition:
+        return last_partition + (last_location,)
+    else:
+        return None
+
+def calculate_delta(df: pd.DataFrame, df_last_partition: Optional[pd.DataFrame]) -> pd.DataFrame:
+    """
+    Calcula os deltas de variação do dia e variação em relação ao dia anterior
     
-            # Cria a estrutura de pastas
-            year_folder = str(current_date.year)
-            month_folder = str(current_date.month).zfill(2)
-            day_folder = str(current_date.day).zfill(2)
-            
-            location_uri = f"s3://{bucket_target}/{base_path}/year={year_folder}/month={month_folder}/day={day_folder}/"
-            file_name = f"tickers_data_{current_date.strftime('%Y%m%d_%H%M%S')}.parquet"
-            full_path = os.path.join(location_uri, file_name)
+    Args:
+        df: DataFrame atual com os dados do dia
+        df_last_partition: DataFrame opcional com os dados da última partição
+    
+    Returns:
+        DataFrame com as novas colunas calculadas
+    """
+    # Calcula delta_variacao_do_dia
+    df["delta_variacao_do_dia"] = pd.to_numeric(df["dayHigh"], errors="coerce") - pd.to_numeric(df["dayLow"], errors="coerce")
+    
+    # Calcula delta_variacao_dia_anterior
+    df["delta_variacao_dia_anterior"] = 0.0  # valor default
+    
+    if df_last_partition is not None and not df_last_partition.empty:
+        # Assegura que as colunas de preço são numéricas
+        df["regularMarketPrice"] = pd.to_numeric(df["regularMarketPrice"], errors="coerce")
+        df_last_partition["regularMarketPrice"] = pd.to_numeric(df_last_partition["regularMarketPrice"], errors="coerce")
+        
+        # Cria um merge dos DataFrames usando o ticker como chave
+        df_merged = df.merge(
+            df_last_partition[["ticker", "regularMarketPrice"]],
+            on="ticker",
+            how="left",
+            suffixes=("", "_anterior")
+        )
+        
+        # Calcula a variação entre os dias
+        df["delta_variacao_dia_anterior"] = df_merged["regularMarketPrice"] - df_merged["regularMarketPrice_anterior"]
+        
+        # Preenche valores NaN com 0
+        df["delta_variacao_dia_anterior"].fillna(0.0, inplace=True)
+    
+    return df
 
-            # Salva o DataFrame como arquivo parquet no S3
+def read_data_from_s3(uri_raw: str) -> pd.DataFrame:
+    s3_client = get_client("s3")
+    bucket_name = uri_raw.replace("s3://", "").split("/", 1)[0]
+    object_key = uri_raw.replace("s3://", "").split("/", 1)[1]
+    
+    response_file = s3_client.get_object(Bucket=bucket_name, Key=object_key)["Body"].read()
+    return pd.read_parquet(BytesIO(response_file))
 
-            buffer = BytesIO()
-            df.to_parquet(buffer, index=False)
-            buffer.seek(0)
+def rename_df(df: pd.DataFrame) -> pd.DataFrame:
+    col_renames = {"longName": "nome_completo", "sector": "setor", "capitalizao_mercado": "marketCap", "tipo_acao": "quoteType", "preco_mercado": "regularMarketPrice", "abertura": "open", "maximo_dia": "dayHigh", "minimo_dia": "dayLow" }
+    df.rename(columns=col_renames, inplace=True)
+    return df
 
-            s3_client.upload_fileobj(
-                buffer,
-                bucket_target,
-                f"{base_path}/year={year_folder}/month={month_folder}/day={day_folder}/{file_name}"
-                )
-            print(f"Arquivo salvo em: {full_path}")
-            
-        except Exception as e:
-            print(f"Erro ao salvar arquivo parquet: {e}")
+def main():
+    args = getResolvedOptions(sys.argv, ['DT_REF', 'ENV', 'URI_OBJECT_RAW',  'OUTPUT_DATABASE', 'OUTPUT_TABLE'])
+    uri_raw = args['URI_OBJECT_RAW']
+    output_db = args['OUTPUT_DATABASE']
+    output_table = args['OUTPUT_TABLE']
 
+    logger.info("Iniciando processamento", extra={
+        "input_path": uri_raw,
+        "glue_table": f"{output_db}.{output_table}"
+    })
+    
+    glue_client = get_client("glue")
+    uri_refined = glue_client.get_table(DatabaseName=output_db, Name=output_table)['Table']['StorageDescriptor']['Location']
+    
+    df_file = read_data_from_s3(uri_raw)
+    last_partition = get_last_partition(output_db, output_table)
+    s3_file_path_last_partition = last_partition[3] if last_partition else None
+    
+    df_last_partition = read_data_from_s3(s3_file_path_last_partition) if s3_file_path_last_partition else None
+    
+    df_delta = calculate_delta(df_file, df_last_partition)
+    df_renamed = rename_df(df_delta)
+    
+    year, month, day = date.today().strftime("%Y"), date.today().strftime("%m"), date.today().strftime("%d")
+    df_prepared = prepare_partition_columns(df_renamed, year, month, day)
+    
+    df_prepared.head(10)
+    print(df_prepared.head(10))
+    save_df_to_s3_parquet(df_prepared, uri_refined)
+    
+    
 if __name__ == "__main__":
-
-    args = getResolvedOptions(sys.argv, ['ENV', 'DT_REF', 'BUCKET_TARGET', 'BASE_DIR'])
-    
-    print(f"=== Job iniciado com sucesso ===")
-    print(f"Data de referência: {args['DT_REF']}")
-    print(f"Bucket target: {args['BUCKET_TARGET']}")
-    print(f"Base dir: {args['BASE_DIR']}")
-    
-    # Instancia a classe e obtém os dados
-    finance_data = FinanceData()
-    result = finance_data.get_tickers_info()
-    
-    # Salva os dados em parquet
-    finance_data.save_to_parquet(result, args['BUCKET_TARGET'], args['BASE_DIR'])
-    
-    # Imprime o resultado em JSON (opcional)
-    print(json.dumps(result[10], indent=2))
-
-    print("=== Sucesso ===")
+    try:
+        main()
+    except Exception as e:
+        print("Erro ao processar o job:")
+        traceback.print_exc()
+        raise
