@@ -196,6 +196,18 @@ def create_logical_partitioning(df: pd.DataFrame, database, table, uri_refined):
     
     df.drop_duplicates(subset=['dat_ano_rffc', 'dat_mes_rffc', 'dat_dia_rffc', 'ticker'], keep='last', inplace=True)
    
+    column_types = {
+        'nome_completo': 'string',
+        'setor': 'string',
+        'capitalizao_mercado': 'double',
+        'tipo_acao': 'string',
+        'preco_mercado': 'double',
+        'abertura': 'double',
+        'minimo_dia': 'double',
+        'maximo_dia': 'double',
+        'delta_variacao_dia_anterior': 'double',
+        'delta_variacao_do_dia': 'double'
+    }
     for index, item in df.iterrows():
         partition_path = f"{uri_refined}{item['dat_ano_rffc']}/{item['dat_mes_rffc']}/{item['dat_dia_rffc']}/{item['ticker']}/"
         partition_values = [str(item['dat_ano_rffc']), str(item['dat_mes_rffc']), 
@@ -219,13 +231,14 @@ def create_logical_partitioning(df: pd.DataFrame, database, table, uri_refined):
                     PartitionInput={
                         'Values': partition_values,
                         'StorageDescriptor': {
-                            'Columns': [{'Name': col, 'Type': 'string'} 
-                                    for col in df.columns 
-                                    if col not in ['dat_ano_rffc', 'dat_mes_rffc', 'dat_dia_rffc', 'ticker']],
+                            'Columns':  [
+                                {'Name': col, 'Type': column_types[col]} 
+                                for col in column_types.keys()
+                            ],
                             'Location': partition_path,
                             'InputFormat': 'org.apache.hadoop.hive.ql.io.parquet.MapredParquetInputFormat',
                             'OutputFormat': 'org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat',
-                            'Compressed': False,
+                            'Compressed': True,
                             'NumberOfBuckets': -1,
                             'SerdeInfo': {
                                 'SerializationLibrary': 'org.apache.hadoop.hive.ql.io.parquet.serde.ParquetHiveSerDe',
@@ -235,7 +248,9 @@ def create_logical_partitioning(df: pd.DataFrame, database, table, uri_refined):
                             },
                             'BucketColumns': [],
                             'SortColumns': [],
-                            'Parameters': {},
+                            'Parameters': {
+                                'parquet.compression': 'SNAPPY'
+                            },
                             'StoredAsSubDirectories': False
                         },
                         'Parameters': {}
