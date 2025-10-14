@@ -27,7 +27,7 @@ variable "spec_table_name" {
 variable "cron_expression" {
   description = "Cron expression for scheduling the Glue Job Data Extraction"
   type        = string
-  default     = "0 12 * * ? *"
+  default     = "0 12 ? * TUE-SAT *"
 }
 
 ## Variables for Glue Jobs
