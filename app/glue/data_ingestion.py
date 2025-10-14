@@ -290,12 +290,42 @@ def cria_uri_refined(output_db, output_table):
     glue_client = get_client("glue")
     uri_refined = glue_client.get_table(DatabaseName=output_db, Name=output_table)['Table']['StorageDescriptor']['Location']
     return uri_refined
+
+def extract_date_from_s3_path(s3_path: str) -> tuple:
+    """
+    Extract year, month and day from S3 path
+    
+    Args:
+        s3_path: Full S3 URI (e.g. s3://bucket/path/year=2025/month=10/day=14/file.parquet)
+    
+    Returns:
+        tuple: (year, month, day)
+    """
+    try:
+        # Split the path by '/'
+        parts = s3_path.split('/')
         
+        # Find the parts that contain year, month and day
+        year = next(part.split('=')[1] for part in parts if part.startswith('year='))
+        month = next(part.split('=')[1] for part in parts if part.startswith('month='))
+        day = next(part.split('=')[1] for part in parts if part.startswith('day='))
+        
+        return year, month, day
+        
+    except Exception as e:
+        logger.error(f"Error extracting date from path {s3_path}: {str(e)}")
+        raise
+       
 def main():
     args = getResolvedOptions(sys.argv, ['DT_REF', 'ENV', 'URI_OBJECT_RAW',  'OUTPUT_DATABASE', 'OUTPUT_TABLE'])
     uri_raw = args['URI_OBJECT_RAW']
     output_db = args['OUTPUT_DATABASE']
     output_table = args['OUTPUT_TABLE']    
+    
+    if args['DT_REF'].lower() != "auto":
+        year, month, day = extract_date_from_s3_path(uri_raw)
+    else:
+        year, month, day = date.today().strftime("%Y"), date.today().strftime("%m"), date.today().strftime("%d")
     
     uri_refined = cria_uri_refined(output_db, output_table) # caminho do refined
     last_partition = get_last_partition(output_db, output_table) # pegando a ultima partição
@@ -306,7 +336,6 @@ def main():
     df_dia_anterior = busca_ultimos_dados(uri_refined, last_partition) if last_partition else None
     df_delta = calculate_delta(df_file, df_dia_anterior) # calculando os deltas
     
-    year, month, day = date.today().strftime("%Y"), date.today().strftime("%m"), date.today().strftime("%d")
     df_prepared = prepare_partition_columns(df_delta, year, month, day)
     
     save_df_to_s3_parquet(df_prepared, uri_refined)
