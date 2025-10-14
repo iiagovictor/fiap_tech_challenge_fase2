@@ -145,6 +145,45 @@ def rename_df(df: pd.DataFrame) -> pd.DataFrame:
     df.rename(columns=col_renames, inplace=True)
     return df
 
+def create_logical_partitioning(df, database, table):
+    glue_client = get_client("glue")
+    
+    df.drop_duplicates(subset=['dat_ano_rffc', 'dat_mes_rffc', 'dat_dia_rffc', 'ticker'], keep='last', inplace=True)
+    
+    for item, index in df.iterrows():
+        partition_path = f"s3://your-bucket/path/dat_ano_rffc={item['dat_ano_rffc']}/dat_mes_rffc={item['dat_mes_rffc']}/dat_dia_rffc={item['dat_dia_rffc']}/ticker={item['ticker']}/"
+        logger.info(f"Logical partition path: {partition_path}")
+        glue_client.create_partition(
+            DatabaseName=database,
+            TableName=table,
+            PartitionInput={
+                'Values': [str(item['dat_ano_rffc']), str(item['dat_mes_rffc']), str(item['dat_dia_rffc']), str(item['ticker'])],
+                'StorageDescriptor': {
+                    'Columns': [{'Name': col, 'Type': 'string'} for col in df.columns if col not in ['dat_ano_rffc', 'dat_mes_rffc', 'dat_dia_rffc', 'ticker']],
+                    'Location': partition_path,
+                    'InputFormat': 'org.apache.hadoop.mapred.TextInputFormat',
+                    'OutputFormat': 'org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat',
+                    'Compressed': False,
+                    'NumberOfBuckets': -1,
+                    'SerdeInfo': {
+                        'SerializationLibrary': 'org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe',
+                        'Parameters': {'field.delim': ',', 'serialization.format': ','}
+                    },
+                    'BucketColumns': [],
+                    'SortColumns': [],
+                    'Parameters': {},
+                    'SkewedInfo': {
+                        'SkewedColumnNames': [],
+                        'SkewedColumnValues': [],
+                        'SkewedColumnValueLocationMaps': {}
+                    },
+                    'StoredAsSubDirectories': False
+                },
+                'Parameters': {}
+            }
+        )
+    print("particões criadas com sucesso")
+    
 def main():
     args = getResolvedOptions(sys.argv, ['DT_REF', 'ENV', 'URI_OBJECT_RAW',  'OUTPUT_DATABASE', 'OUTPUT_TABLE'])
     uri_raw = args['URI_OBJECT_RAW']
@@ -174,6 +213,10 @@ def main():
     df_prepared.head(10)
     print(df_prepared.head(10))
     save_df_to_s3_parquet(df_prepared, uri_refined)
+    
+    create_logical_partitioning(df_prepared[['dat_ano_rffc', 'dat_mes_rffc', 'dat_dia_rffc', 'ticker']], output_db, output_table)
+    
+    
     
     
 if __name__ == "__main__":
