@@ -20,7 +20,7 @@ Construir uma pipeline de dados utilizando serviços AWS (Glue, S3, Lambda e Ath
 - AWS Athena
 - Terraform
 - Python
-
+ 
 ## 📂 Estrutura do Projeto
 
 ```
