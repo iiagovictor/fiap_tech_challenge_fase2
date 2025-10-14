@@ -50,14 +50,67 @@ def prepare_partition_columns(df: pd.DataFrame, year, month, day) -> pd.DataFram
     return df
 
 def save_df_to_s3_parquet(df, output_uri):
-    table = pa.Table.from_pandas(df, preserve_index=False)
-    ds.write_dataset(
-        data=table,
-        base_dir=output_uri,
-        format="parquet",
-        partitioning=['dat_ano_rffc', 'dat_mes_rffc', 'dat_dia_rffc', 'ticker'],   # ajuste suas colunas
-        existing_data_behavior="overwrite_or_ignore",  # sobrescreve por arquivo; não apaga pastas antigas
-    )
+    try:
+        numeric_columns = [
+            'capitalizao_mercado', 'preco_mercado', 'abertura', 
+            'minimo_dia', 'maximo_dia', 'delta_variacao_do_dia',
+            'delta_variacao_dia_anterior'
+        ]
+        
+        for col in numeric_columns:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+                
+        string_columns = ['nome_completo', 'setor', 'tipo_acao', 
+                         'dat_ano_rffc', 'dat_mes_rffc', 'dat_dia_rffc', 'ticker']
+    
+        for col in string_columns:
+                if col in df.columns:
+                    df[col] = df[col].astype(str)
+        # Define schema explícito para garantir tipos corretos
+        schema = pa.schema([
+            ('nome_completo', pa.string()),
+            ('setor', pa.string()),
+            ('capitalizao_mercado', pa.float64()),
+            ('tipo_acao', pa.string()),
+            ('preco_mercado', pa.float64()),
+            ('abertura', pa.float64()),
+            ('minimo_dia', pa.float64()),
+            ('maximo_dia', pa.float64()),
+            ('delta_variacao_dia_anterior', pa.float64()),
+            ('delta_variacao_do_dia', pa.float64()),
+            ('dat_ano_rffc', pa.string()),
+            ('dat_mes_rffc', pa.string()),
+            ('dat_dia_rffc', pa.string()),
+            ('ticker', pa.string())
+        ])
+
+        # Converte DataFrame para Table com schema explícito
+        table = pa.Table.from_pandas(df, schema=schema, preserve_index=False)
+
+        # Define particionamento
+        partition_schema = ds.DirectoryPartitioning(
+            pa.schema([
+                ('dat_ano_rffc', pa.string()),
+                ('dat_mes_rffc', pa.string()),
+                ('dat_dia_rffc', pa.string()),
+                ('ticker', pa.string())
+            ])
+        )
+
+        # Salva dataset
+        ds.write_dataset(
+            data=table,
+            base_dir=output_uri,
+            format="parquet",
+            partitioning=partition_schema,
+            existing_data_behavior="overwrite_or_ignore",
+            use_threads=True
+        )
+        
+    except Exception as e:
+        logger.error(f"Error saving parquet: {str(e)}")
+        raise
 
 def get_client(service_name: str):
     """Get cached boto3 client or create new one"""
@@ -142,45 +195,58 @@ def create_logical_partitioning(df: pd.DataFrame, database, table, uri_refined):
     glue_client = get_client("glue")
     
     df.drop_duplicates(subset=['dat_ano_rffc', 'dat_mes_rffc', 'dat_dia_rffc', 'ticker'], keep='last', inplace=True)
-    
-    print(df.head(10))
-    df.info()
-    
+   
     for index, item in df.iterrows():
-        print(item)
-        print(index)
         partition_path = f"{uri_refined}{item['dat_ano_rffc']}/{item['dat_mes_rffc']}/{item['dat_dia_rffc']}/{item['ticker']}/"
-        print(partition_path)
-        logger.info(f"Logical partition path: {partition_path}")
-        glue_client.create_partition(
-            DatabaseName=database,
-            TableName=table,
-            PartitionInput={
-                'Values': [str(item['dat_ano_rffc']), str(item['dat_mes_rffc']), str(item['dat_dia_rffc']), str(item['ticker'])],
-                'StorageDescriptor': {
-                    'Columns': [{'Name': col, 'Type': 'string'} for col in df.columns if col not in ['dat_ano_rffc', 'dat_mes_rffc', 'dat_dia_rffc', 'ticker']],
-                    'Location': partition_path,
-                    'InputFormat': 'org.apache.hadoop.mapred.TextInputFormat',
-                    'OutputFormat': 'org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat',
-                    'Compressed': False,
-                    'NumberOfBuckets': -1,
-                    'SerdeInfo': {
-                        'SerializationLibrary': 'org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe',
-                        'Parameters': {'field.delim': ',', 'serialization.format': ','}
-                    },
-                    'BucketColumns': [],
-                    'SortColumns': [],
-                    'Parameters': {},
-                    'SkewedInfo': {
-                        'SkewedColumnNames': [],
-                        'SkewedColumnValues': [],
-                        'SkewedColumnValueLocationMaps': {}
-                    },
-                    'StoredAsSubDirectories': False
-                },
-                'Parameters': {}
-            }
-        )
+        partition_values = [str(item['dat_ano_rffc']), str(item['dat_mes_rffc']), 
+                          str(item['dat_dia_rffc']), str(item['ticker'])]
+        
+        try:
+            # Try to get existing partition
+            glue_client.get_partition(
+                DatabaseName=database,
+                TableName=table,
+                PartitionValues=partition_values
+            )
+            logger.info(f"Partition already exists: {partition_path}")
+            continue
+        
+        except glue_client.exceptions.EntityNotFoundException:
+            try:
+                glue_client.create_partition(
+                    DatabaseName=database,
+                    TableName=table,
+                    PartitionInput={
+                        'Values': partition_values,
+                        'StorageDescriptor': {
+                            'Columns': [{'Name': col, 'Type': 'string'} 
+                                    for col in df.columns 
+                                    if col not in ['dat_ano_rffc', 'dat_mes_rffc', 'dat_dia_rffc', 'ticker']],
+                            'Location': partition_path,
+                            'InputFormat': 'org.apache.hadoop.hive.ql.io.parquet.MapredParquetInputFormat',
+                            'OutputFormat': 'org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat',
+                            'Compressed': False,
+                            'NumberOfBuckets': -1,
+                            'SerdeInfo': {
+                                'SerializationLibrary': 'org.apache.hadoop.hive.ql.io.parquet.serde.ParquetHiveSerDe',
+                                'Parameters': {
+                                    'serialization.format': '1'
+                                }
+                            },
+                            'BucketColumns': [],
+                            'SortColumns': [],
+                            'Parameters': {},
+                            'StoredAsSubDirectories': False
+                        },
+                        'Parameters': {}
+                    }
+                )
+                logger.info(f"Created partition: {partition_path}")
+                    
+            except Exception as e:
+                logger.error(f"Error creating partition {partition_path}: {str(e)}")
+                continue
+
     print("particões criadas com sucesso")
     
 def busca_ultimos_dados(uri_refined, last_partition):
@@ -217,23 +283,18 @@ def main():
     output_table = args['OUTPUT_TABLE']    
     
     uri_refined = cria_uri_refined(output_db, output_table) # caminho do refined
-    print(f"URI Refined: {uri_refined}")
-    
     last_partition = get_last_partition(output_db, output_table) # pegando a ultima partição
-    print(f"Last partition: {last_partition}")
 
     df_file = read_data_from_s3(uri_raw) # lendo o arquivo do cru do yfinance
     df_file = rename_df(df_file) # definindo nomes em portugues
     
     df_dia_anterior = busca_ultimos_dados(uri_refined, last_partition) if last_partition else None
-    
     df_delta = calculate_delta(df_file, df_dia_anterior) # calculando os deltas
-    print(df_delta.head(10))
-    
-    save_df_to_s3_parquet(df_delta, uri_refined)
     
     year, month, day = date.today().strftime("%Y"), date.today().strftime("%m"), date.today().strftime("%d")
     df_prepared = prepare_partition_columns(df_delta, year, month, day)
+    
+    save_df_to_s3_parquet(df_prepared, uri_refined)
     
     logical = df_prepared[['dat_ano_rffc', 'dat_mes_rffc', 'dat_dia_rffc', 'ticker']]
     create_logical_partitioning(logical, output_db, output_table, uri_refined)
