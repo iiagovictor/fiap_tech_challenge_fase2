@@ -15,7 +15,7 @@ resource "aws_glue_catalog_table" "spec_table" {
   }
 
   storage_descriptor {
-    location = "s3://${var.project_name}-raw-${data.aws_caller_identity.current.account_id}/${var.spec_table_name}/"
+    location = "s3://${var.project_name}-spec-${data.aws_caller_identity.current.account_id}/${var.spec_table_name}/"
     input_format  = "org.apache.hadoop.hive.ql.io.parquet.MapredParquetInputFormat"
     output_format = "org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat"
 
