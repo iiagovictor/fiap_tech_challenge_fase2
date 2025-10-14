@@ -86,6 +86,20 @@ resource "aws_glue_catalog_table" "spec_table" {
       type = "decimal(18, 4)"
       comment = "O preço mais alto que o ativo atingiu em qualquer momento durante o dia de negociação."
     }
+
+    # NOVA COLUNA 9: Máxima do Dia
+    columns {
+      name = "delta_variacao_do_dia"
+      type = "decimal(18, 4)"
+      comment = "Variação do maior e menor valor da ação no dia"
+    }
+
+    # NOVA COLUNA 9: Máxima do Dia
+    columns {
+      name = "delta_variacao_dia_anterior"
+      type = "decimal(18, 4)"
+      comment = "Variação do preço da ação entre os dias"
+    }
   }
 
   partition_keys {
