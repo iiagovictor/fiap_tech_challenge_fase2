@@ -1,6 +1,7 @@
 import json
 import boto3
 import os
+from urllib.parse import unquote_plus
 
 
 DATABASE_OUTPUT = os.getenv('DATABASE_OUTPUT')
@@ -15,8 +16,8 @@ def lambda_handler(event, context):
         print(f"Evento recebido: {event}")
         print(f"Contexto recebido: {context}")
 
-        bucket_raw = event['Records'][0]['s3']['bucket']['name']
-        key_raw = event['Records'][0]['s3']['object']['key']
+        bucket_raw = unquote_plus(event['Records'][0]['s3']['bucket']['name'])
+        key_raw = unquote_plus(event['Records'][0]['s3']['object']['key'])
         object_uri = f"s3://{bucket_raw}/{key_raw}"
 
         print(f"BUCKET_TARGET: {bucket_raw}, KEY: {key_raw}, OBJECT_URI: {object_uri}")
